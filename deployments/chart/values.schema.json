@@ -166,7 +166,13 @@
 		  "awselbservices",
 		  "awsnlbservices",
 		  "ingresses",
-		  "gateways"
+		  "gateways",
+		  "rabbitmqclusters",
+		  "cnpgclusters",
+		  "elasticsearches",
+		  "mongodbcommunities",
+		  "redisreplications",
+		  "redissentinels"
 		]
 	  }
 	},
