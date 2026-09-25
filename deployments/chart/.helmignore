@@ -2,3 +2,6 @@
 .gitignore
 icon.svg
 signing-key.asc
+tests/
+.kube-linter.yaml
+ci/

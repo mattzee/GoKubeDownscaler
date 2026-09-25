@@ -1,0 +1,49 @@
+suite: monitoring
+release:
+  name: gkd
+  namespace: downscaler
+tests:
+  - it: puts a Service in front of the metrics port
+    template: metricsservice.yaml
+    asserts:
+      - equal: { path: 'spec.ports[0]', value: { name: http-metrics, port: 8080, targetPort: http, protocol: TCP } }
+
+  - it: scrapes the metrics Service from the release namespace
+    template: servicemonitor.yaml
+    set:
+      serviceMonitor.enabled: true
+      serviceMonitor.additionalLabels: { release: kube-prometheus-stack }
+    asserts:
+      - equal: { path: metadata.namespace, value: downscaler }
+      - equal: { path: metadata.labels.release, value: kube-prometheus-stack }
+      - equal: { path: 'spec.endpoints[0].port', value: http-metrics }
+      - equal: { path: 'spec.selector.matchLabels["app.kubernetes.io/component"]', value: metrics }
+
+  - it: refuses a ServiceMonitor without the Service
+    template: servicemonitor.yaml
+    set:
+      serviceMonitor.enabled: true
+      metrics.service.enabled: false
+    asserts:
+      - failedTemplate: {}
+
+  - it: defaults the PodMonitor to the release namespace
+    template: podmonitor.yaml
+    set:
+      podMonitor.enabled: true
+    asserts:
+      - equal: { path: metadata.namespace, value: downscaler }
+      - equal: { path: 'spec.podMetricsEndpoints[0].port', value: http }
+
+  - it: ships the alerts, scoped to this release
+    template: prometheusrule.yaml
+    set:
+      prometheusRule.enabled: true
+    asserts:
+      - lengthEqual: { path: 'spec.groups[0].rules', count: 6 }
+      - matchRegex:
+          path: spec.groups[0].rules[0].expr
+          pattern: 'namespace="downscaler", container="go-kube-downscaler"'
+      - equal:
+          path: spec.groups[0].rules[1].expr
+          value: 'sum(increase(kubedownscaler_cycle_executions_total{namespace="downscaler", container="go-kube-downscaler"}[10m])) == 0'
