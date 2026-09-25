@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -15,17 +17,26 @@ import (
 	_ "time/tzdata"
 
 	"github.com/caas-team/gokubedownscaler/internal/api/kubernetes"
+	"github.com/caas-team/gokubedownscaler/internal/pkg/health"
 	"github.com/caas-team/gokubedownscaler/internal/pkg/metrics"
 	"github.com/caas-team/gokubedownscaler/internal/pkg/scalable"
+	"github.com/caas-team/gokubedownscaler/internal/pkg/tracing"
 	"github.com/caas-team/gokubedownscaler/internal/pkg/values"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"k8s.io/apiserver/pkg/registry/generic/registry"
-	"k8s.io/apiserver/pkg/server/mux"
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/component-base/metrics/legacyregistry"
 )
 
 const (
 	leaseName = "downscaler-lease"
+	// legacyHealthAddr and legacyMetricsAddr are used when --port is not set.
+	legacyHealthAddr  = ":8081"
+	legacyMetricsAddr = ":8085"
+	// tracingShutdownTimeout bounds the final span flush on exit.
+	tracingShutdownTimeout = 5 * time.Second
 )
 
 func main() {
@@ -46,71 +57,85 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
-	defer cancel()
-
-	go serveHealth()
-
-	downscalerMetrics := initMetrics(config)
-
-	if !config.LeaderElection {
-		runWithoutLeaderElection(client, ctx, scopeDefault, scopeCli, scopeEnv, config, downscalerMetrics)
-		return
-	}
-
-	runWithLeaderElection(client, cancel, ctx, scopeDefault, scopeCli, scopeEnv, config, downscalerMetrics)
-}
-
-// serveMetrics starts the metrics server for the downscaler.
-func serveMetrics() {
-	pathRecorderMux := mux.NewPathRecorderMux("kube-downscaler")
-	metricsHandler := legacyregistry.Handler().ServeHTTP
-
-	pathRecorderMux.HandleFunc("/metrics", func(w http.ResponseWriter, req *http.Request) {
-		metricsHandler(w, req)
-	})
-
-	server := &http.Server{
-		Addr:         ":8085",
-		Handler:      pathRecorderMux,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  120 * time.Second,
-	}
-
-	err := server.ListenAndServe()
+	shutdownTracing, err := tracing.Setup(context.Background(), config.Tracing)
 	if err != nil {
-		slog.Error("failed to start metrics server", "error", err)
+		slog.Error("failed to set up tracing", "error", err)
 		os.Exit(1)
 	}
 
-	slog.Info("serving metrics on /metrics")
+	defer flushTracing(shutdownTracing)
+
+	// SIGTERM cancels the context, so the scan loop stops between cycles and buffered spans are flushed.
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+
+	defer cancel()
+
+	tracker := health.NewTracker(health.StaleAfter(config.HealthStaleAfter, config.Interval))
+	downscalerMetrics := initMetrics(config)
+
+	go serve(config, tracker)
+
+	if !config.LeaderElection {
+		runWithoutLeaderElection(client, ctx, scopeDefault, scopeCli, scopeEnv, config, downscalerMetrics, tracker)
+		return
+	}
+
+	runWithLeaderElection(client, cancel, ctx, scopeDefault, scopeCli, scopeEnv, config, downscalerMetrics, tracker)
 }
 
-// serveHealth starts the health server for the downscaler.
-func serveHealth() {
-	pathRecorderMux := http.NewServeMux()
+// flushTracing exports any buffered spans before the process exits.
+func flushTracing(shutdown tracing.Shutdown) {
+	ctx, cancel := context.WithTimeout(context.Background(), tracingShutdownTimeout)
+	defer cancel()
 
-	pathRecorderMux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
+	if err := shutdown(ctx); err != nil {
+		slog.Warn("failed to flush traces", "error", err)
+	}
+}
 
-	pathRecorderMux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
+// serve starts the HTTP listeners for the probes and metrics. With --port set,
+// /healthz, /readyz and /metrics share that one listener; otherwise the probes
+// are served on :8081 and metrics on :8085.
+func serve(config *runtimeConfiguration, tracker *health.Tracker) {
+	probes := http.NewServeMux()
+	probes.Handle("/healthz", tracker.LivenessHandler())
+	probes.Handle("/readyz", tracker.ReadinessHandler())
 
+	if config.Port > 0 {
+		if config.MetricsEnabled {
+			probes.Handle("/metrics", legacyregistry.Handler())
+		}
+
+		listen(net.JoinHostPort("", strconv.Itoa(config.Port)), probes, "probes and metrics")
+
+		return
+	}
+
+	if config.MetricsEnabled {
+		metricsMux := http.NewServeMux()
+		metricsMux.Handle("/metrics", legacyregistry.Handler())
+
+		go listen(legacyMetricsAddr, metricsMux, "metrics")
+	}
+
+	listen(legacyHealthAddr, probes, "probes")
+}
+
+// listen serves handler on addr and exits the process if the listener fails.
+func listen(addr string, handler http.Handler, endpoints string) {
 	server := &http.Server{
-		Addr:         ":8081",
-		Handler:      pathRecorderMux,
+		Addr:         addr,
+		Handler:      handler,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
 
+	slog.Info("serving http", "endpoints", endpoints, "address", addr)
+
 	err := server.ListenAndServe()
 	if err != nil {
-		slog.Error("failed to start health server", "error", err)
+		slog.Error("failed to start http server", "endpoints", endpoints, "address", addr, "error", err)
 		os.Exit(1)
 	}
 }
@@ -123,6 +148,7 @@ func runWithLeaderElection(
 	scopeDefault, scopeCli, scopeEnv *values.Scope,
 	config *runtimeConfiguration,
 	downscalerMetrics *metrics.Metrics,
+	tracker *health.Tracker,
 ) {
 	lease, err := client.CreateLease(leaseName)
 	if err != nil {
@@ -148,7 +174,7 @@ func runWithLeaderElection(
 			OnStartedLeading: func(ctx context.Context) {
 				slog.Info("started leading")
 
-				err = startScanning(client, ctx, scopeDefault, scopeCli, scopeEnv, config, downscalerMetrics)
+				err = startScanning(client, ctx, scopeDefault, scopeCli, scopeEnv, config, downscalerMetrics, tracker)
 				if err != nil {
 					slog.Error("an error occurred while scanning workloads", "error", err)
 					cancel()
@@ -172,103 +198,180 @@ func runWithoutLeaderElection(
 	scopeDefault, scopeCli, scopeEnv *values.Scope,
 	config *runtimeConfiguration,
 	downscalerMetrics *metrics.Metrics,
+	tracker *health.Tracker,
 ) {
 	slog.Warn("proceeding without leader election; this could cause errors when running with multiple replicas")
 
-	err := startScanning(client, ctx, scopeDefault, scopeCli, scopeEnv, config, downscalerMetrics)
+	err := startScanning(client, ctx, scopeDefault, scopeCli, scopeEnv, config, downscalerMetrics, tracker)
 	if err != nil {
 		slog.Error("an error occurred while scanning workloads, exiting", "error", err)
 		os.Exit(1)
 	}
 }
 
-// startScanning periodically triggers a scan on all workloads.
+// startScanning periodically triggers a scan on all workloads until ctx is canceled.
 func startScanning(
 	client kubernetes.Client,
 	ctx context.Context,
 	scopeDefault, scopeCli, scopeEnv *values.Scope,
 	config *runtimeConfiguration,
 	downscalerMetrics *metrics.Metrics,
+	tracker *health.Tracker,
 ) error {
 	slog.Info("started downscaler scanning process")
+
+	tracker.StartedScanning()
+	downscalerMetrics.SetScanning(true)
+
+	defer func() {
+		tracker.StoppedScanning()
+		downscalerMetrics.SetScanning(false)
+	}()
 
 	previousNamespacesToMetrics := newNamespaceToMetrics(config)
 
 	for {
-		start := time.Now()
-		currentNamespaceToMetrics := newNamespaceToMetrics(config)
-
-		workloads, err := client.GetWorkloads(config.IncludeNamespaces, config.IncludeResources, ctx)
+		currentNamespaceToMetrics, err := runCycle(
+			client, ctx, scopeDefault, scopeCli, scopeEnv, config, downscalerMetrics, previousNamespacesToMetrics,
+		)
 		if err != nil {
-			return fmt.Errorf("failed to get workloads: %w", err)
+			if ctx.Err() != nil {
+				slog.Info("stopped scanning", "reason", context.Cause(ctx))
+				return nil
+			}
+
+			return err
 		}
 
-		workloads = scalable.FilterExcluded(
-			workloads,
-			config.IncludeLabels,
-			config.ExcludeNamespaces,
-			config.ExcludeWorkloads,
-			currentNamespaceToMetrics,
-			slog.Default(),
-		)
-		slog.Debug("scanning over workloads matching filters", "amount", len(workloads))
-
-		namespaceScopes, errs := client.GetNamespacesScopes(workloads, ctx)
-		if len(errs) > 0 {
-			handleNamespaceScopeParsingErrors(errs, config, currentNamespaceToMetrics)
-		}
-
-		var waitGroup sync.WaitGroup
-		for _, workload := range workloads {
-			waitGroup.Add(1)
-
-			go func(workload scalable.Workload) {
-				logger := workloadLogger(workload)
-
-				logger.Debug("scanning workload")
-
-				defer waitGroup.Done()
-
-				workloadNamespaceMetrics, err := getWorkloadNamespaceMetrics(config, workload, currentNamespaceToMetrics)
-				if err != nil && !errors.Is(err, ErrMetricsDisabled) {
-					logger.Error("failed to get namespace metrics", "error", err)
-
-					return
-				}
-
-				err = scanWorkload(workload, client, ctx, scopeDefault, scopeCli, scopeEnv, namespaceScopes, workloadNamespaceMetrics, config, logger)
-				if err != nil {
-					logger.Error("failed to scan workload", "error", err)
-
-					return
-				}
-
-				logger.Debug("workload scan completed")
-			}(workload)
-		}
-
-		waitGroup.Wait()
-		slog.Debug("successfully scanned all workloads in target")
-
-		downscalerMetrics.UpdateMetrics(
-			config.MetricsEnabled,
-			currentNamespaceToMetrics,
-			previousNamespacesToMetrics,
-			time.Since(start).Seconds(),
-		)
+		tracker.CycleCompleted()
 
 		previousNamespacesToMetrics = currentNamespaceToMetrics
 
 		if config.Once {
 			slog.Debug("once is set to true, exiting")
-			break
+			return nil
 		}
 
 		slog.Debug("waiting until next scan", "interval", config.Interval.String())
-		time.Sleep(config.Interval)
+
+		select {
+		case <-ctx.Done():
+			slog.Info("stopped scanning", "reason", context.Cause(ctx))
+			return nil
+		case <-time.After(config.Interval):
+		}
+	}
+}
+
+// runCycle scans every workload in scope once and returns the cycle's per-namespace metrics.
+func runCycle(
+	client kubernetes.Client,
+	ctx context.Context,
+	scopeDefault, scopeCli, scopeEnv *values.Scope,
+	config *runtimeConfiguration,
+	downscalerMetrics *metrics.Metrics,
+	previousNamespacesToMetrics map[string]*metrics.NamespaceMetricsHolder,
+) (map[string]*metrics.NamespaceMetricsHolder, error) {
+	start := time.Now()
+
+	ctx, span := tracing.Tracer().Start(ctx, "downscaler.cycle")
+	defer span.End()
+
+	currentNamespaceToMetrics := newNamespaceToMetrics(config)
+
+	workloads, err := client.GetWorkloads(config.IncludeNamespaces, config.IncludeResources, ctx)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to get workloads")
+
+		return nil, fmt.Errorf("failed to get workloads: %w", err)
 	}
 
-	return nil
+	workloads = scalable.FilterExcluded(
+		workloads,
+		config.IncludeLabels,
+		config.ExcludeNamespaces,
+		config.ExcludeWorkloads,
+		currentNamespaceToMetrics,
+		slog.Default(),
+	)
+	span.SetAttributes(attribute.Int("downscaler.workloads", len(workloads)))
+	slog.Debug("scanning over workloads matching filters", "amount", len(workloads))
+
+	namespaceScopes, errs := client.GetNamespacesScopes(workloads, ctx)
+	if len(errs) > 0 {
+		handleNamespaceScopeParsingErrors(errs, config, currentNamespaceToMetrics)
+	}
+
+	var waitGroup sync.WaitGroup
+	for _, workload := range workloads {
+		waitGroup.Add(1)
+
+		go func(workload scalable.Workload) {
+			defer waitGroup.Done()
+
+			processWorkload(
+				workload, client, ctx, scopeDefault, scopeCli, scopeEnv, namespaceScopes, currentNamespaceToMetrics, config, downscalerMetrics,
+			)
+		}(workload)
+	}
+
+	waitGroup.Wait()
+	slog.Debug("successfully scanned all workloads in target")
+
+	downscalerMetrics.UpdateMetrics(
+		config.MetricsEnabled,
+		currentNamespaceToMetrics,
+		previousNamespacesToMetrics,
+		time.Since(start).Seconds(),
+	)
+
+	return currentNamespaceToMetrics, nil
+}
+
+// processWorkload scans one workload inside its own span and records a failure in logs, the span and metrics.
+func processWorkload(
+	workload scalable.Workload,
+	client kubernetes.Client,
+	ctx context.Context,
+	scopeDefault, scopeCli, scopeEnv *values.Scope,
+	namespaceScopes map[string]*values.Scope,
+	currentNamespaceToMetrics map[string]*metrics.NamespaceMetricsHolder,
+	config *runtimeConfiguration,
+	downscalerMetrics *metrics.Metrics,
+) {
+	kind := workloadResourceKind(workload)
+	logger := workloadLogger(workload)
+
+	ctx, span := tracing.Tracer().Start(ctx, "downscaler.workload", trace.WithAttributes(
+		attribute.String("k8s.namespace.name", workload.GetNamespace()),
+		attribute.String("downscaler.workload.kind", kind),
+		attribute.String("downscaler.workload.name", workload.GetName()),
+	))
+	defer span.End()
+
+	logger.Debug("scanning workload")
+
+	workloadNamespaceMetrics, err := getWorkloadNamespaceMetrics(config, workload, currentNamespaceToMetrics)
+	if err != nil && !errors.Is(err, ErrMetricsDisabled) {
+		logger.Error("failed to get namespace metrics", "error", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to get namespace metrics")
+
+		return
+	}
+
+	err = scanWorkload(workload, client, ctx, scopeDefault, scopeCli, scopeEnv, namespaceScopes, workloadNamespaceMetrics, config, logger)
+	if err != nil {
+		logger.Error("failed to scan workload", "error", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to scan workload")
+		downscalerMetrics.IncrementWorkloadScanErrors(kind)
+
+		return
+	}
+
+	logger.Debug("workload scan completed")
 }
 
 func handleNamespaceScopeParsingErrors(
@@ -401,6 +504,7 @@ func scanWorkload(
 			"decisionScope", gracePeriodEvaluation.Scope.String(),
 		)
 		logger.Debug("workload is on grace period, skipping")
+		trace.SpanFromContext(ctx).SetAttributes(attribute.String("downscaler.scaling", "scalingGracePeriod"))
 		workloadNamespaceMetrics.IncrementExcludedWorkloadsCount()
 
 		return nil
@@ -415,6 +519,7 @@ func scanWorkload(
 			"decisionScope", exclusionEvaluation.Scope.String(),
 		)
 		logger.Debug("workload is excluded, skipping")
+		trace.SpanFromContext(ctx).SetAttributes(attribute.String("downscaler.scaling", "scalingExcluded"))
 		workloadNamespaceMetrics.IncrementExcludedWorkloadsCount()
 
 		return nil
@@ -422,6 +527,10 @@ func scanWorkload(
 
 	decision := getCurrentScaling(exclusionEvaluation.Matched, upscaleOnExclusion, upscaleScope, &scopes, logger)
 	logger = withScalingDecision(logger, decision)
+	trace.SpanFromContext(ctx).SetAttributes(
+		attribute.String("downscaler.scaling", decision.Scaling.String()),
+		attribute.String("downscaler.decision_scope", decision.Scope.String()),
+	)
 
 	err = attemptScaling(client, ctx, decision, workload, scopes, workloadNamespaceMetrics, config, logger)
 	if err != nil {
@@ -592,8 +701,6 @@ func initMetrics(config *runtimeConfiguration) *metrics.Metrics {
 	if !config.MetricsEnabled {
 		return nil
 	}
-
-	go serveMetrics()
 
 	m := metrics.NewMetrics(config.DryRun)
 	m.RegisterAll()
