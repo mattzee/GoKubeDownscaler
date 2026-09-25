@@ -1,0 +1,38 @@
+suite: disruption, network and RBAC policy
+release:
+  name: gkd
+  namespace: downscaler
+tests:
+  - it: names the PDB after the controller and lets unhealthy pods be evicted
+    template: poddisruptionbudget.yaml
+    asserts:
+      - equal: { path: metadata.name, value: gkd-go-kube-downscaler }
+      - equal: { path: spec.maxUnavailable, value: 1 }
+      - equal: { path: spec.unhealthyPodEvictionPolicy, value: AlwaysAllow }
+
+  - it: renders no lease Role without leader election
+    template: leaserole.yaml
+    asserts:
+      - hasDocuments: { count: 0 }
+
+  - it: renders the lease Role with leader election
+    template: leaserole.yaml
+    set:
+      replicaCount: 2
+    asserts:
+      - hasDocuments: { count: 2 }
+
+  - it: allows only DNS and the API server out, and only the port in
+    template: networkpolicy.yaml
+    asserts:
+      - equal: { path: 'spec.ingress[0].ports', value: [{ port: http, protocol: TCP }] }
+      - lengthEqual: { path: spec.egress, count: 2 }
+
+  - it: opens the collector when tracing is on
+    template: networkpolicy.yaml
+    set:
+      tracing.enabled: true
+      tracing.collector.namespaceSelector: { kubernetes.io/metadata.name: monitoring }
+    asserts:
+      - lengthEqual: { path: spec.egress, count: 3 }
+      - equal: { path: 'spec.egress[2].ports', value: [{ port: 4317, protocol: TCP }] }

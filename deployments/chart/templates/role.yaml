@@ -6,6 +6,9 @@ kind: Role
 metadata:
   name: {{ include "go-kube-downscaler.fullname" $ }}
   namespace: {{ $namespace }}
+  labels:
+    {{- include "go-kube-downscaler.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: controller
 rules:
 {{ include "go-kube-downscaler.permissions" $ }}
 ---
@@ -14,6 +17,9 @@ kind: RoleBinding
 metadata:
   name: {{ include "go-kube-downscaler.fullname" $ }}
   namespace: {{ $namespace }}
+  labels:
+    {{- include "go-kube-downscaler.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: controller
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
