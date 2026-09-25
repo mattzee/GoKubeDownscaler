@@ -23,6 +23,12 @@ type runtimeConfiguration struct {
 	Interval time.Duration
 	// MaxRetriesOnConflict sets the maximum number of retries on 409 errors.
 	MaxRetriesOnConflict int
+	// Port serves /healthz, /readyz and /metrics on one listener when set; 0 keeps the probes on 8081 and metrics on 8085.
+	Port int
+	// HealthStaleAfter sets how long the scan loop may go without completing a cycle before liveness fails; 0 derives it from Interval.
+	HealthStaleAfter time.Duration
+	// Tracing enables OpenTelemetry tracing, configured through the standard OTEL_* environment variables.
+	Tracing bool
 }
 
 func getDefaultConfig() *runtimeConfiguration {
@@ -58,6 +64,23 @@ func (c *runtimeConfiguration) parseConfigFlags() {
 		"max-retries-on-conflict",
 		0,
 		"maximum number of retries on 409 conflict errors (default: 0)",
+	)
+	flag.IntVar(
+		&c.Port,
+		"port",
+		0,
+		"serve /healthz, /readyz and /metrics on this one port; 0 keeps probes on 8081 and metrics on 8085 (default: 0)",
+	)
+	flag.Var(
+		(*util.DurationValue)(&c.HealthStaleAfter),
+		"health-stale-after",
+		"fail liveness when no scan cycle completed for this long; 0 means ten intervals, at least 5m (default: 0)",
+	)
+	flag.BoolVar(
+		&c.Tracing,
+		"tracing",
+		false,
+		"export OpenTelemetry traces over OTLP gRPC, configured through OTEL_* environment variables (default: false)",
 	)
 }
 
@@ -140,7 +163,10 @@ func (c *runtimeConfiguration) String() string {
 	fmt.Fprintf(&builder, "once:%t ", c.Once)
 	fmt.Fprintf(&builder, "leaderElection:%t ", c.LeaderElection)
 	fmt.Fprintf(&builder, "interval:%s ", c.Interval)
-	fmt.Fprintf(&builder, "maxRetriesOnConflict:%d", c.MaxRetriesOnConflict)
+	fmt.Fprintf(&builder, "maxRetriesOnConflict:%d ", c.MaxRetriesOnConflict)
+	fmt.Fprintf(&builder, "port:%d ", c.Port)
+	fmt.Fprintf(&builder, "healthStaleAfter:%s ", c.HealthStaleAfter)
+	fmt.Fprintf(&builder, "tracing:%t", c.Tracing)
 
 	builder.WriteString("]")
 
