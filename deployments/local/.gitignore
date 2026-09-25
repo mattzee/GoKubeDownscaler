@@ -1,0 +1,5 @@
+.image-tag
+.chart-version
+.charts/
+.application.yaml
+local.mk
