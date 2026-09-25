@@ -217,10 +217,21 @@ func (s *Scope) getForceScaling(scopes Scopes) Scaling {
 	}
 
 	if s.ForceDowntime != nil || s.ForceUptime != nil {
+		if s.forceTimeSpansExpired(time.Now()) {
+			// every force timespan on this scope lies in the past and can never match again,
+			// so the scope no longer forces anything and the regular schedule takes over
+			return ScalingNone
+		}
+
 		return ScalingIgnore // default result to non-unset value to avoid falling through
 	}
 
 	return ScalingNone
+}
+
+// forceTimeSpansExpired reports whether every force timespan set on the scope has passed and can never match again.
+func (s *Scope) forceTimeSpansExpired(now time.Time) bool {
+	return s.ForceDowntime.allExpired(now) && s.ForceUptime.allExpired(now)
 }
 
 type Scopes [5]*Scope
