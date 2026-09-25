@@ -5,8 +5,14 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "go-kube-downscaler.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
 spec:
   replicas: {{ .Values.replicaCount }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
+  {{- with .Values.updateStrategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "go-kube-downscaler.selectorLabels" . | nindent 6 }}
@@ -14,6 +20,11 @@ spec:
     metadata:
       labels:
         {{- include "go-kube-downscaler.selectorLabels" . | nindent 8 }}
+        {{- include "go-kube-downscaler.standardLabels" . | nindent 8 }}
+        app.kubernetes.io/component: controller
+        {{- with .Values.commonLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -28,94 +39,131 @@ spec:
       {{- end }}
     spec:
       serviceAccountName: {{ include "go-kube-downscaler.serviceAccountName" . }}
+      automountServiceAccountToken: true
       {{- if .Values.priorityClassName }}
       priorityClassName: {{ .Values.priorityClassName }}
       {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: {{ .Chart.Name }}
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          image: {{ include "go-kube-downscaler.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
-          - --include-resources={{ join "," .Values.includedResources }}
-          {{- with .Values.extraArguments }}
-          {{- toYaml . | nindent 10 }}
-          {{- end }}
-          {{- with .Values.arguments }}
-          {{- toYaml . | nindent 10 }}
-          {{- end }}
-          {{- if eq (include "go-kube-downscaler.leaderElection" .) "true" }}
-          - --leader-election
-          {{- end }}
-          {{- if .Values.metrics.enabled }}
-          - --metrics
-          {{- end }}
-          {{- if .Values.constrainedNamespaces }}
-          - --namespace={{ join "," .Values.constrainedNamespaces }}
-          {{- end }}
-          {{- if .Values.metrics.enabled }}
+            - --include-resources={{ join "," .Values.includedResources }}
+            - --port={{ .Values.port }}
+            {{- with .Values.healthProbes.livenessStaleAfter }}
+            - --health-stale-after={{ . }}
+            {{- end }}
+            {{- if .Values.logging.json }}
+            - --json-logs
+            {{- end }}
+            {{- if .Values.logging.debug }}
+            - --debug
+            {{- end }}
+            {{- if .Values.metrics.enabled }}
+            - --metrics
+            {{- end }}
+            {{- if .Values.tracing.enabled }}
+            - --tracing
+            {{- end }}
+            {{- if eq (include "go-kube-downscaler.leaderElection" .) "true" }}
+            - --leader-election
+            {{- end }}
+            {{- if .Values.constrainedNamespaces }}
+            - --namespace={{ join "," .Values.constrainedNamespaces }}
+            {{- end }}
+            {{- with .Values.extraArguments }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+            {{- with .Values.arguments }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           ports:
-            - name: metrics
-              containerPort: 8085
-          {{- end }}
+            - name: http
+              containerPort: {{ .Values.port }}
+              protocol: TCP
           envFrom:
-          - configMapRef:
-              name: {{ .Values.configMap.name }}
-              optional: true
+            - configMapRef:
+                name: {{ include "go-kube-downscaler.configMapName" . }}
+                optional: true
           env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- if .Values.tracing.enabled }}
+            {{- if .Values.tracing.endpoint }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.tracing.endpoint | quote }}
+            {{- end }}
+            - name: OTEL_EXPORTER_OTLP_INSECURE
+              value: {{ .Values.tracing.insecure | quote }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ .Values.tracing.serviceName | default (include "go-kube-downscaler.fullname" .) | quote }}
+            - name: OTEL_TRACES_SAMPLER
+              value: {{ .Values.tracing.sampler | quote }}
+            - name: OTEL_TRACES_SAMPLER_ARG
+              value: {{ .Values.tracing.samplerArg | quote }}
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              {{- $attributes := list "k8s.pod.name=$(POD_NAME)" "k8s.namespace.name=$(POD_NAMESPACE)" (printf "service.version=%s" (.Values.image.tag | default .Chart.AppVersion)) }}
+              {{- range $key, $value := .Values.tracing.resourceAttributes }}
+              {{- $attributes = append $attributes (printf "%s=%s" $key $value) }}
+              {{- end }}
+              value: {{ join "," $attributes | quote }}
+            {{- end }}
             {{- with .Values.extraEnv }}
-            {{- toYaml . | nindent 10 }}
+            {{- toYaml . | nindent 12 }}
             {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
-          {{- if .Values.healthProbes.readinessProbe.enabled }}
-          readinessProbe:
-            httpGet:
-              path: /readyz
-              port: 8081
-            failureThreshold: {{ .Values.healthProbes.readinessProbe.failureThreshold }}
-            initialDelaySeconds: {{ .Values.healthProbes.readinessProbe.initialDelaySeconds }}
-            periodSeconds: {{ .Values.healthProbes.readinessProbe.periodSeconds }}
-            timeoutSeconds: {{ .Values.healthProbes.readinessProbe.timeoutSeconds }}
-            successThreshold: {{ .Values.healthProbes.readinessProbe.successThreshold }}
-          {{- end }}
-          {{- if .Values.healthProbes.livenessProbe.enabled }}
-          livenessProbe:
-            httpGet:
-              path: /healthz
-              port: 8081
-            failureThreshold: {{ .Values.healthProbes.livenessProbe.failureThreshold }}
-            initialDelaySeconds: {{ .Values.healthProbes.livenessProbe.initialDelaySeconds }}
-            periodSeconds: {{ .Values.healthProbes.livenessProbe.periodSeconds }}
-            timeoutSeconds: {{ .Values.healthProbes.livenessProbe.timeoutSeconds }}
-            successThreshold: {{ .Values.healthProbes.livenessProbe.successThreshold }}
-          {{- end }}
-          {{- if .Values.healthProbes.startupProbe.enabled }}
+          {{- with .Values.healthProbes }}
+          {{- if .startupProbe.enabled }}
           startupProbe:
-            httpGet:
-              path: /healthz
-              port: 8081
-            failureThreshold: {{ .Values.healthProbes.startupProbe.failureThreshold }}
-            initialDelaySeconds: {{ .Values.healthProbes.startupProbe.initialDelaySeconds }}
-            periodSeconds: {{ .Values.healthProbes.startupProbe.periodSeconds }}
-            timeoutSeconds: {{ .Values.healthProbes.startupProbe.timeoutSeconds }}
-            successThreshold: {{ .Values.healthProbes.startupProbe.successThreshold }}
+            {{- include "go-kube-downscaler.probe" (dict "path" "/readyz" "probe" .startupProbe) | nindent 12 }}
           {{- end }}
-      {{- with .Values.imagePullSecrets }}
-      imagePullSecrets:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      securityContext:
-        {{- toYaml .Values.podSecurityContext | nindent 8 }}
-    {{- with .Values.nodeSelector }}
+          {{- if .livenessProbe.enabled }}
+          livenessProbe:
+            {{- include "go-kube-downscaler.probe" (dict "path" "/healthz" "probe" .livenessProbe) | nindent 12 }}
+          {{- end }}
+          {{- if .readinessProbe.enabled }}
+          readinessProbe:
+            {{- include "go-kube-downscaler.probe" (dict "path" "/readyz" "probe" .readinessProbe) | nindent 12 }}
+          {{- end }}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
-    {{- end }}
-    {{- with .Values.affinity }}
+      {{- end }}
+      {{- if .Values.affinity }}
       affinity:
+        {{- toYaml .Values.affinity | nindent 8 }}
+      {{- else if gt (int .Values.replicaCount) 1 }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "go-kube-downscaler.selectorLabels" . | nindent 20 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
         {{- toYaml . | nindent 8 }}
-    {{- end }}
+      {{- end }}
       {{- with .Values.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}

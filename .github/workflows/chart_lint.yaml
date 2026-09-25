@@ -1,0 +1,56 @@
+name: Lint helm chart
+
+on:
+  pull_request:
+    paths:
+      - deployments/chart/**
+      - .github/workflows/chart_lint.yaml
+  push:
+    branches: [main]
+    paths:
+      - deployments/chart/**
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      CHART: deployments/chart
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: helm lint
+        run: |
+          helm lint --strict "$CHART"
+          helm lint --strict "$CHART" --values "$CHART/ci/all-features-values.yaml"
+
+      - name: helm-unittest
+        run: |
+          helm plugin install https://github.com/helm-unittest/helm-unittest --version v1.0.3
+          helm unittest "$CHART"
+
+      - name: kube-linter
+        uses: stackrox/kube-linter-action@v1
+        with:
+          directory: deployments/chart
+          config: deployments/chart/.kube-linter.yaml
+
+      - name: kubeconform
+        run: |
+          curl -sSfL https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz | tar xz kubeconform
+          for values in "$CHART/values.yaml" "$CHART/ci/all-features-values.yaml"; do
+            helm template gkd "$CHART" --namespace downscaler --values "$values" |
+              ./kubeconform -strict -summary \
+                -schema-location default \
+                -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+          done
+
+      - name: README is up to date
+        run: |
+          npx --yes @bitnami/readme-generator-for-helm@2.7.2 --values "$CHART/values.yaml" --readme "$CHART/README.md"
+          git diff --exit-code -- "$CHART/README.md" ||
+            { echo "::error::Regenerate deployments/chart/README.md from values.yaml (see the Parameters section)"; exit 1; }

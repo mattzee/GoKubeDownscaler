@@ -1,19 +1,24 @@
-{{- if or .Values.podDisruptionBudget.minAvailable .Values.podDisruptionBudget.maxUnavailable }}
+{{- with .Values.podDisruptionBudget }}
+{{- if and .enabled (or .minAvailable .maxUnavailable) }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  namespace: {{ .Release.Namespace }}
-  name: {{ include "go-kube-downscaler.webhookController.fullname" . }}
+  name: {{ include "go-kube-downscaler.fullname" $ }}
+  namespace: {{ $.Release.Namespace }}
   labels:
-    {{- include "go-kube-downscaler.labels" . | nindent 4 }}
+    {{- include "go-kube-downscaler.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: controller
 spec:
   selector:
     matchLabels:
-      {{- include "go-kube-downscaler.selectorLabels" . | nindent 6 }}
-  {{- if .Values.podDisruptionBudget.minAvailable }}
-  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+      {{- include "go-kube-downscaler.selectorLabels" $ | nindent 6 }}
+  {{- if .minAvailable }}
+  minAvailable: {{ .minAvailable }}
+  {{- else }}
+  maxUnavailable: {{ .maxUnavailable }}
   {{- end }}
-  {{-  if .Values.podDisruptionBudget.maxUnavailable }}
-  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  {{- with .unhealthyPodEvictionPolicy }}
+  unhealthyPodEvictionPolicy: {{ . }}
   {{- end }}
+{{- end }}
 {{- end }}

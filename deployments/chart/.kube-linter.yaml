@@ -1,0 +1,14 @@
+# kube-linter configuration for the chart: every built-in check, minus the ones
+# that do not fit a single cluster-wide controller installed into any cluster.
+#   kube-linter lint --config deployments/chart/.kube-linter.yaml deployments/chart
+checks:
+  addAllBuiltIn: true
+  exclude:
+    - sorted-keys              # key order is a template-readability choice
+    - use-namespace            # objects take the release namespace at install time
+    - minimum-three-replicas   # one scanning replica by design; extra replicas only stand by
+    - no-node-affinity         # placement is left to the installer (nodeSelector/affinity values)
+    - dnsconfig-options        # cluster DNS defaults are right for this pod
+    - required-annotation-email
+    - required-label-owner     # ownership labels are organisation policy, set through commonLabels
+    - restart-policy           # Deployments always restart; the field is implied

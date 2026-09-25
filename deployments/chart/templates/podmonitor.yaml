@@ -5,15 +5,14 @@ metadata:
   name: {{ include "go-kube-downscaler.fullname" . }}
   labels:
     {{- include "go-kube-downscaler.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
     {{- with .Values.podMonitor.additionalLabels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
-  {{- with .Values.podMonitor.namespace }}
-  namespace: {{ . }}
-  {{- end }}
+  namespace: {{ .Values.podMonitor.namespace | default .Release.Namespace }}
 spec:
   podMetricsEndpoints:
-    - port: metrics
+    - port: http
       path: /metrics
     {{- with .Values.podMonitor.interval }}
       interval: {{ . }}
