@@ -18,8 +18,8 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// The OT-Container-Kit redis-operator exposes two child-less-to-us CRs that VCP
-// runs: RedisReplication and RedisSentinel. Both share the same group/version and
+// The OT-Container-Kit redis-operator exposes two child-less-to-us CRs:
+// RedisReplication and RedisSentinel. Both share the same group/version and
 // are scaled by spec.clusterSize (NOT spec.replicas). The operator reconciles the
 // child StatefulSet's replica count from clusterSize and owns it by
 // ownerReference, so both kinds go in supportedOwnerKinds and the StatefulSets are
