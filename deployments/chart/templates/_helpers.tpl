@@ -54,10 +54,71 @@ Common labels
 {{- define "go-kube-downscaler.labels" -}}
 helm.sh/chart: {{ include "go-kube-downscaler.chart" . }}
 {{ include "go-kube-downscaler.selectorLabels" . }}
+{{ include "go-kube-downscaler.standardLabels" . }}
+{{- with .Values.commonLabels }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{/*
+Recommended labels (https://kubernetes.io/docs/concepts/overview/working-with-objects/common-labels/).
+They are not part of the selectors: those stay on `application` so upgrades keep the immutable
+Deployment selector.
+*/}}
+{{- define "go-kube-downscaler.standardLabels" -}}
+app.kubernetes.io/name: {{ include "go-kube-downscaler.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
+app.kubernetes.io/part-of: go-kube-downscaler
 app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{/*
+Chart name, overridable with nameOverride.
+*/}}
+{{- define "go-kube-downscaler.name" -}}
+{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
+Name of the controller's ConfigMap.
+*/}}
+{{- define "go-kube-downscaler.configMapName" -}}
+{{- default (include "go-kube-downscaler.fullname" .) .Values.configMap.name }}
+{{- end }}
+
+{{/*
+Controller image reference; a digest wins over the tag.
+*/}}
+{{- define "go-kube-downscaler.image" -}}
+{{- if .Values.image.digest -}}
+{{ .Values.image.repository }}@{{ .Values.image.digest }}
+{{- else -}}
+{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
+{{- end -}}
+{{- end }}
+
+{{/*
+Name of the metrics Service, which is also the Prometheus job name under a ServiceMonitor.
+*/}}
+{{- define "go-kube-downscaler.metricsServiceName" -}}
+{{- printf "%s-metrics" (include "go-kube-downscaler.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
+Probe block: probe name, path, and the probe's values.
+*/}}
+{{- define "go-kube-downscaler.probe" -}}
+httpGet:
+  path: {{ .path }}
+  port: http
+initialDelaySeconds: {{ .probe.initialDelaySeconds }}
+periodSeconds: {{ .probe.periodSeconds }}
+timeoutSeconds: {{ .probe.timeoutSeconds }}
+failureThreshold: {{ .probe.failureThreshold }}
+successThreshold: {{ .probe.successThreshold }}
 {{- end }}
 
 {{/*
