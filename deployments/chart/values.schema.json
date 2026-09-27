@@ -141,6 +141,10 @@
 	}
   },
   "properties": {
+	"global": {
+	  "description": "Helm passes the parent chart's global values to every subchart; accepted so the chart can be used as a dependency",
+	  "type": "object"
+	},
 	"replicaCount": { "type": "integer", "minimum": 0 },
 	"image": { "$ref": "#/$defs/image" },
 	"imagePullSecrets": {
