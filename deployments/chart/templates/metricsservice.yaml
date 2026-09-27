@@ -1,0 +1,25 @@
+{{- if and .Values.metrics.enabled .Values.metrics.service.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "go-kube-downscaler.metricsServiceName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "go-kube-downscaler.labels" . | nindent 4 }}
+    app.kubernetes.io/component: metrics
+  {{- with .Values.metrics.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  # Standby replicas are ready too, so every replica is scraped and
+  # kubedownscaler_scanning shows which one holds the lease.
+  selector:
+    {{- include "go-kube-downscaler.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http-metrics
+      port: {{ .Values.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

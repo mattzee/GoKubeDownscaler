@@ -793,3 +793,48 @@ func TestIsDirectionalTimestamp(t *testing.T) {
 		})
 	}
 }
+
+func TestTimeSpans_allExpired(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2024, time.June, 10, 12, 0, 0, 0, time.UTC)
+	past := absoluteTimeSpan{from: now.Add(-2 * time.Hour), to: now.Add(-time.Hour)}
+	endingNow := absoluteTimeSpan{from: now.Add(-time.Hour), to: now}
+	active := absoluteTimeSpan{from: now.Add(-time.Hour), to: now.Add(time.Hour)}
+	future := absoluteTimeSpan{from: now.Add(time.Hour), to: now.Add(2 * time.Hour)}
+	until := modeUntil
+	from := modeFrom
+
+	tests := []struct {
+		name      string
+		timespans *timeSpans
+		want      bool
+	}{
+		{name: "nil is unset and counts as expired", timespans: nil, want: true},
+		{name: "empty counts as expired", timespans: &timeSpans{}, want: true},
+		{name: "past absolute", timespans: &timeSpans{past}, want: true},
+		{name: "absolute ending exactly now", timespans: &timeSpans{endingNow}, want: true},
+		{name: "active absolute", timespans: &timeSpans{active}, want: false},
+		{name: "future absolute", timespans: &timeSpans{future}, want: false},
+		{name: "all past absolutes", timespans: &timeSpans{past, past}, want: true},
+		{name: "one active among past absolutes", timespans: &timeSpans{past, active}, want: false},
+		{name: "boolean true never expires", timespans: &timeSpans{booleanTimeSpan(true)}, want: false},
+		{name: "boolean false never expires", timespans: &timeSpans{booleanTimeSpan(false)}, want: false},
+		{name: "relative never expires", timespans: &timeSpans{relativeTimeSpan{}}, want: false},
+		{name: "directional until in the past", timespans: &timeSpans{directionalTimeSpan{mode: &until, time: now.Add(-time.Hour)}}, want: true},
+		{
+			name:      "directional until in the future",
+			timespans: &timeSpans{directionalTimeSpan{mode: &until, time: now.Add(time.Hour)}},
+			want:      false,
+		},
+		{name: "directional from never expires", timespans: &timeSpans{directionalTimeSpan{mode: &from, time: now.Add(-time.Hour)}}, want: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, test.want, test.timespans.allExpired(now))
+		})
+	}
+}
