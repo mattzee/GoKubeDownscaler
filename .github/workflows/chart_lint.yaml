@@ -20,8 +20,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Helm
-        uses: azure/setup-helm@v4
+      # A pinned Helm rather than whatever the runner image ships.
+      - name: Install Helm
+        env:
+          HELM_VERSION: v3.19.0
+          HELM_SHA256: a7f81ce08007091b86d8bd696eb4d86b8d0f2e1b9f6c714be62f82f96a594496
+        run: |
+          curl -sSfLO "https://get.helm.sh/helm-$HELM_VERSION-linux-amd64.tar.gz"
+          echo "$HELM_SHA256  helm-$HELM_VERSION-linux-amd64.tar.gz" | sha256sum -c -
+          tar xzf "helm-$HELM_VERSION-linux-amd64.tar.gz" linux-amd64/helm
+          sudo install linux-amd64/helm /usr/local/bin/helm
+          rm -rf "helm-$HELM_VERSION-linux-amd64.tar.gz" linux-amd64
+          helm version --short
 
       - name: helm lint
         run: |
@@ -30,7 +40,10 @@ jobs:
 
       - name: helm-unittest
         run: |
-          helm plugin install https://github.com/helm-unittest/helm-unittest --version v1.0.3
+          # Helm 4 verifies plugins by default and helm-unittest is not signed.
+          verify=""
+          case "$(helm version --short)" in v4.*) verify="--verify=false" ;; esac
+          helm plugin install https://github.com/helm-unittest/helm-unittest --version v1.0.3 $verify
           helm unittest "$CHART"
 
       - name: kube-linter
