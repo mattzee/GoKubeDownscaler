@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 	_ "time/tzdata"
 
@@ -275,10 +276,12 @@ func cleanDeletedNamespaceMetrics(ctx context.Context, config *serverConfig, cli
 	}
 }
 
+// toSet builds the set of included resources. Names are lowercased, matching how the
+// downscaler resolves --include-resources, so a check like "scaledobjects" is case-insensitive.
 func toSet(items []string) map[string]struct{} {
 	m := make(map[string]struct{}, len(items))
 	for _, item := range items {
-		m[item] = struct{}{}
+		m[strings.ToLower(item)] = struct{}{}
 	}
 
 	return m
