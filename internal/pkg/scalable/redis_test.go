@@ -121,3 +121,59 @@ func TestRedis_Copy_IsDeepCopy(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, values.AbsoluteReplicas(3), gotOrig, "mutating the copy must not touch the original")
 }
+
+// TestRedis_ParkRepeatWake runs the scan sequence the downscaler actually performs:
+// park, park again on the next scan while still in downtime, then wake. A parked
+// RedisSentinel sits at its CRD floor of 1, which must count as already scaled down;
+// otherwise the second park overwrites the original clusterSize with 1 and the
+// wake restores 1 instead of 3.
+func TestRedis_ParkRepeatWake(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		gvk        schema.GroupVersionKind
+		wantParked int64
+		wantTo     values.Replicas
+		wantCPU    float64
+	}{
+		{gvk: redisReplicationGVK, wantParked: 0, wantTo: values.AbsoluteReplicas(0), wantCPU: 3 * 0.1},
+		// The CR saves 2 pods; the last one is saved (and counted) by the child StatefulSet.
+		{gvk: redisSentinelGVK, wantParked: 1, wantTo: values.AbsoluteReplicas(1), wantCPU: 2 * 0.1},
+	}
+
+	for _, test := range tests {
+		t.Run(test.gvk.Kind, func(t *testing.T) {
+			t.Parallel()
+
+			redis := newTestRedis(test.gvk, int64(3))
+			require.NoError(t, unstructured.SetNestedField(redis.Object, "100m",
+				"spec", "kubernetesConfig", "resources", "requests", "cpu"))
+
+			workload := &replicaScaledWorkload{redis}
+			clusterSize := func() int64 {
+				val, _, _ := unstructured.NestedInt64(redis.Object, "spec", "clusterSize")
+				return val
+			}
+
+			parked, err := workload.ScaleDown(values.AbsoluteReplicas(0), nil)
+			require.NoError(t, err)
+			assert.True(t, parked.IsUpdateNeeded)
+			assert.Equal(t, test.wantParked, clusterSize())
+			assert.Equal(t, test.wantTo, parked.To)
+			assert.InDelta(t, test.wantCPU, parked.SavedResources.TotalCPU(), 1e-9)
+			assert.Equal(t, "3", redis.GetAnnotations()[annotationOriginalReplicas])
+
+			again, err := workload.ScaleDown(values.AbsoluteReplicas(0), nil)
+			require.NoError(t, err)
+			assert.False(t, again.IsUpdateNeeded, "the next scan must not park again")
+			assert.Equal(t, "3", redis.GetAnnotations()[annotationOriginalReplicas], "the original must survive the next scan")
+			assert.InDelta(t, test.wantCPU, again.SavedResources.TotalCPU(), 1e-9)
+
+			woken, err := workload.ScaleUp(nil)
+			require.NoError(t, err)
+			assert.True(t, woken.IsUpdateNeeded)
+			assert.Equal(t, int64(3), clusterSize(), "wake restores the original clusterSize")
+			assert.NotContains(t, redis.GetAnnotations(), annotationOriginalReplicas)
+		})
+	}
+}

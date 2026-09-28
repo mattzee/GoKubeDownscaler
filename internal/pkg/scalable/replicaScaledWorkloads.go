@@ -29,6 +29,11 @@ type replicaScaledResource interface {
 	Compare(workloadCopy Workload) (jsondiff.Patch, error)
 }
 
+// minimumReplicasResource is implemented by replica-scaled resources that cannot be scaled below a floor.
+type minimumReplicasResource interface {
+	minimumReplicas() int32
+}
+
 // replicaScaledWorkload is a wrapper for all resources which are scaled by setting the replica count.
 type replicaScaledWorkload struct {
 	replicaScaledResource
@@ -116,6 +121,8 @@ func (r *replicaScaledWorkload) ScaleDown(downscaleReplicas values.Replicas, log
 		return summary, fmt.Errorf("failed to convert replicas to int32: %w", err)
 	}
 
+	downscaleReplicas, downscaleReplicasInt32 = r.applyMinimumReplicas(downscaleReplicas, downscaleReplicasInt32)
+
 	currentReplicas, err := r.getReplicas()
 	if err != nil {
 		return summary, fmt.Errorf("failed to get current replicas for workload: %w", err)
@@ -171,6 +178,29 @@ func (r *replicaScaledWorkload) ScaleDown(downscaleReplicas values.Replicas, log
 	summary.To = downscaleReplicas
 
 	return summary, nil
+}
+
+// applyMinimumReplicas raises the downscale target to the resource's replica floor, if it has one.
+//
+// A resource with a floor can never go below it, so the floor is the real target. Without this, a workload
+// parked at its floor looks "above target" on every scan: it is re-parked and its original replicas are
+// overwritten with the floor, so the next wake restores the floor instead of the original count.
+//
+//nolint:nonamedreturns // named returns tell the two forms of the target apart
+func (r *replicaScaledWorkload) applyMinimumReplicas(
+	replicas values.Replicas,
+	replicasInt32 int32,
+) (target values.Replicas, targetInt32 int32) {
+	floored, ok := r.replicaScaledResource.(minimumReplicasResource)
+	if !ok {
+		return replicas, replicasInt32
+	}
+
+	if minimum := floored.minimumReplicas(); replicasInt32 < minimum {
+		return values.AbsoluteReplicas(minimum), minimum
+	}
+
+	return replicas, replicasInt32
 }
 
 // getOriginalReplicas retrieves the original replicas from the workload.

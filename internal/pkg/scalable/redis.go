@@ -114,6 +114,16 @@ func (r *redisWorkload) getReplicas() (values.Replicas, error) {
 	return values.AbsoluteReplicas(replicas), nil
 }
 
+// minimumReplicas returns the lowest clusterSize the CRD allows: 1 for RedisSentinel, 0 for RedisReplication.
+// ScaleDown targets this floor, so a sentinel parked at 1 is recognized as already scaled down.
+func (r *redisWorkload) minimumReplicas() int32 {
+	if r.gvk.Kind == redisSentinelKind {
+		return 1
+	}
+
+	return 0
+}
+
 // setReplicas sets the clusterSize on the resource.
 //
 // RedisSentinel's CRD enforces clusterSize >= 1, so it can never be driven to 0
@@ -121,10 +131,7 @@ func (r *redisWorkload) getReplicas() (values.Replicas, error) {
 // real park is carried by scaling its child StatefulSet to 0 (see GetChildren).
 // RedisReplication has no such floor and parks to 0 on the CR directly.
 func (r *redisWorkload) setReplicas(replicas int32) error {
-	target := int64(replicas)
-	if r.gvk.Kind == redisSentinelKind && target < 1 {
-		target = 1
-	}
+	target := int64(max(replicas, r.minimumReplicas()))
 
 	if err := unstructured.SetNestedField(r.Object, target, "spec", "clusterSize"); err != nil {
 		return fmt.Errorf("failed to set spec.clusterSize for %s %s/%s: %w", r.GetKind(), r.GetNamespace(), r.GetName(), err)
