@@ -68,8 +68,9 @@ includedResources:
   # RabbitmqCluster / Elasticsearch / RedisReplication), and the operator
   # reconciles its own workloads from it. Do NOT also add the operators'
   # StatefulSets here — the generic statefulsets scaler is kept off operator-
-  # owned StatefulSets via supportedOwnerKinds, and doubling up would fight the
-  # operator. Enable a data engine by uncommenting only its CR entry.
+  # owned StatefulSets via supportedOwnerKinds and workloadDefinitions, and
+  # doubling up would fight the operator. The rabbitmq, cnpg, elasticsearch,
+  # mongodb and redis entries come from workloadDefinitions below. Enable a data engine by uncommenting only its CR entry.
 #  - postgresqls
 #  - cnpgclusters
 #  - rabbitmqclusters
@@ -86,6 +87,106 @@ includedResources:
 #  - broadcastjobs
 #  - imagepulljobs
 #  - advanceddaemonsets
+
+## @param workloadDefinitions [object] Operator custom resources scaled by the generic definition-driven scaler, keyed by the name used in includedResources. Set an entry to null to drop it
+# Each entry describes one operator custom resource, so supporting a new
+# operator is a values change instead of a code change. The downscaler only
+# scales a definition that is also listed in includedResources, and RBAC and
+# admission rules are generated for exactly those. Fields:
+#   group, version, kind   the custom resource's API group, version and kind
+#   plural                 the CRD's plural resource name, if it differs from the key
+#   replicas.path          dot path to an integer replica field (replica-shaped), with
+#   replicas.minimum       an optional floor that downscales are clamped to
+#   suspend.annotation     annotation (or suspend.path, a dot path to a field) that
+#   suspend.suspendedValue suspends the resource when set to suspendedValue and
+#   suspend.resumedValue   resumes it when set to resumedValue (suspend-shaped)
+#   parkGuard.requireAnnotations  refuse to scale to 0 unless all are present
+#   children               StatefulSets/Deployments scaled with the parent when
+#                          downscaler/scale-children is enabled, matched by
+#                          ownerReference or by a label equal to the parent's name
+#   savings                where pod resource requests live, for the saved-resources
+#                          metric: requestsPath or containersPath, plus for suspend
+#                          countPath (pods per group) and groupsPath (list of groups)
+# Keys must be lowercase names that do not clash with a built-in resource.
+workloadDefinitions:
+  rabbitmqclusters:
+    group: rabbitmq.com
+    version: v1beta1
+    kind: RabbitmqCluster
+    replicas:
+      path: spec.replicas
+    savings:
+      requestsPath: spec.resources.requests
+  cnpgclusters:
+    plural: clusters
+    group: postgresql.cnpg.io
+    version: v1
+    kind: Cluster
+    suspend:
+      annotation: cnpg.io/hibernation
+      suspendedValue: "on"
+      resumedValue: "off"
+    savings:
+      requestsPath: spec.resources.requests
+      countPath: spec.instances
+  elasticsearches:
+    group: elasticsearch.k8s.elastic.co
+    version: v1
+    kind: Elasticsearch
+    # Pausing orchestration leaves the node pods running, so the node-set
+    # StatefulSets are scaled as children.
+    suspend:
+      annotation: eck.k8s.elastic.co/pause-orchestration
+      suspendedValue: "true"
+      resumedValue: "false"
+    children:
+      - kind: StatefulSet
+        match: labelEqualsName
+        label: elasticsearch.k8s.elastic.co/cluster-name
+    savings:
+      groupsPath: spec.nodeSets
+      countPath: count
+      containersPath: podTemplate.spec.containers
+  mongodbcommunities:
+    plural: mongodbcommunity
+    group: mongodbcommunity.mongodb.com
+    version: v1
+    kind: MongoDBCommunity
+    # The operator stops reconciling at members 0, so the StatefulSet is scaled
+    # as a child. Parking before the operator has recorded a known-good config
+    # risks it never coming back, so that is refused.
+    replicas:
+      path: spec.members
+    parkGuard:
+      requireAnnotations:
+        - mongodb.com/v1.lastSuccessfulConfiguration
+    children:
+      - kind: StatefulSet
+        match: ownerReference
+    savings:
+      containersPath: spec.statefulSet.spec.template.spec.containers
+  redisreplications:
+    group: redis.redis.opstreelabs.in
+    version: v1beta2
+    kind: RedisReplication
+    replicas:
+      path: spec.clusterSize
+    savings:
+      requestsPath: spec.kubernetesConfig.resources.requests
+  redissentinels:
+    group: redis.redis.opstreelabs.in
+    version: v1beta2
+    kind: RedisSentinel
+    # The CRD forbids clusterSize 0, so the CR is floored at 1 and the
+    # StatefulSet carries the park as a child.
+    replicas:
+      path: spec.clusterSize
+      minimum: 1
+    children:
+      - kind: StatefulSet
+        match: ownerReference
+    savings:
+      requestsPath: spec.kubernetesConfig.resources.requests
 
 ## @param constrainedNamespaces Restrict the downscaler to these namespaces, with namespaced Roles instead of a ClusterRole
 constrainedNamespaces: []

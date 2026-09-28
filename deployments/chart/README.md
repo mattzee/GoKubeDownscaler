@@ -48,29 +48,30 @@ You can find information on how to adjust the chart to your needs on our [helm d
 
 ### Downscaler Controller
 
-| Name                                          | Description                                                                                 | Value                                |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------ |
-| `replicaCount`                                | Number of controller replicas. Leader election is turned on when this is greater than 1     | `1`                                  |
-| `revisionHistoryLimit`                        | Number of old ReplicaSets kept for rollback                                                 | `3`                                  |
-| `updateStrategy.type`                         | Deployment update strategy                                                                  | `RollingUpdate`                      |
-| `updateStrategy.rollingUpdate.maxSurge`       | Extra pods during a rollout                                                                 | `0`                                  |
-| `updateStrategy.rollingUpdate.maxUnavailable` | Pods that may be down during a rollout                                                      | `1`                                  |
-| `image.repository`                            | Controller image repository                                                                 | `ghcr.io/caas-team/gokubedownscaler` |
-| `image.tag`                                   | Controller image tag. Defaults to the chart appVersion                                      | `""`                                 |
-| `image.digest`                                | Controller image digest (sha256:...). Takes precedence over the tag when set                | `""`                                 |
-| `image.pullPolicy`                            | Controller image pull policy                                                                | `IfNotPresent`                       |
-| `imagePullSecrets`                            | Secrets for pulling the controller image, e.g. `[{name: regcred}]`                          | `[]`                                 |
-| `arguments`                                   | Additional command-line arguments, kept for compatibility with extraArguments               | `nil`                                |
-| `extraArguments`                              | Additional command-line arguments, e.g. `["--interval=60s"]`                                | `nil`                                |
-| `includedResources`                           | Kinds the downscaler manages. See the comments in values.yaml for every supported kind      | `["deployments"]`                    |
-| `constrainedNamespaces`                       | Restrict the downscaler to these namespaces, with namespaced Roles instead of a ClusterRole | `[]`                                 |
-| `excludedNamespaces`                          | Namespaces the downscaler never touches. Empty means the release namespace and kube-system  | `["kube-downscaler","kube-system"]`  |
-| `configMap.name`                              | Name of the configuration ConfigMap. Defaults to the full name                              | `""`                                 |
-| `configMap.extraConfig`                       | Extra lines for the ConfigMap, e.g. `DOWNSCALE_PERIOD: "Mon-Sun 19:00-20:00 Europe/Berlin"` | `""`                                 |
-| `forceRestartOnConfigChange`                  | Roll the pods when the ConfigMap changes                                                    | `true`                               |
-| `logging.json`                                | Write logs as JSON, one object per line, for Loki and other log pipelines                   | `true`                               |
-| `logging.debug`                               | Log at debug level                                                                          | `false`                              |
-| `extraEnv`                                    | Extra environment variables for the controller container                                    | `[]`                                 |
+| Name                                          | Description                                                                                                                                            | Value                                |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------ |
+| `replicaCount`                                | Number of controller replicas. Leader election is turned on when this is greater than 1                                                                | `1`                                  |
+| `revisionHistoryLimit`                        | Number of old ReplicaSets kept for rollback                                                                                                            | `3`                                  |
+| `updateStrategy.type`                         | Deployment update strategy                                                                                                                             | `RollingUpdate`                      |
+| `updateStrategy.rollingUpdate.maxSurge`       | Extra pods during a rollout                                                                                                                            | `0`                                  |
+| `updateStrategy.rollingUpdate.maxUnavailable` | Pods that may be down during a rollout                                                                                                                 | `1`                                  |
+| `image.repository`                            | Controller image repository                                                                                                                            | `ghcr.io/caas-team/gokubedownscaler` |
+| `image.tag`                                   | Controller image tag. Defaults to the chart appVersion                                                                                                 | `""`                                 |
+| `image.digest`                                | Controller image digest (sha256:...). Takes precedence over the tag when set                                                                           | `""`                                 |
+| `image.pullPolicy`                            | Controller image pull policy                                                                                                                           | `IfNotPresent`                       |
+| `imagePullSecrets`                            | Secrets for pulling the controller image, e.g. `[{name: regcred}]`                                                                                     | `[]`                                 |
+| `arguments`                                   | Additional command-line arguments, kept for compatibility with extraArguments                                                                          | `nil`                                |
+| `extraArguments`                              | Additional command-line arguments, e.g. `["--interval=60s"]`                                                                                           | `nil`                                |
+| `includedResources`                           | Kinds the downscaler manages. See the comments in values.yaml for every supported kind                                                                 | `["deployments"]`                    |
+| `workloadDefinitions`                         | Operator custom resources scaled by the generic definition-driven scaler, keyed by the name used in includedResources. Set an entry to null to drop it | `{}`                                 |
+| `constrainedNamespaces`                       | Restrict the downscaler to these namespaces, with namespaced Roles instead of a ClusterRole                                                            | `[]`                                 |
+| `excludedNamespaces`                          | Namespaces the downscaler never touches. Empty means the release namespace and kube-system                                                             | `["kube-downscaler","kube-system"]`  |
+| `configMap.name`                              | Name of the configuration ConfigMap. Defaults to the full name                                                                                         | `""`                                 |
+| `configMap.extraConfig`                       | Extra lines for the ConfigMap, e.g. `DOWNSCALE_PERIOD: "Mon-Sun 19:00-20:00 Europe/Berlin"`                                                            | `""`                                 |
+| `forceRestartOnConfigChange`                  | Roll the pods when the ConfigMap changes                                                                                                               | `true`                               |
+| `logging.json`                                | Write logs as JSON, one object per line, for Loki and other log pipelines                                                                              | `true`                               |
+| `logging.debug`                               | Log at debug level                                                                                                                                     | `false`                              |
+| `extraEnv`                                    | Extra environment variables for the controller container                                                                                               | `[]`                                 |
 
 ### Service Account and RBAC
 

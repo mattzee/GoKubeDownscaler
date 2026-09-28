@@ -11,6 +11,7 @@ import (
 	"github.com/caas-team/gokubedownscaler/internal/pkg/metrics"
 	"github.com/caas-team/gokubedownscaler/internal/pkg/util"
 	"github.com/caas-team/gokubedownscaler/internal/pkg/values"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -20,17 +21,11 @@ const (
 	annotationOriginalReplicas  = "downscaler/original-replicas"
 	deploymentGroupVersion      = "apps/v1"
 	deploymentKind              = "Deployment"
-	elasticsearchGroup          = "elasticsearch.k8s.elastic.co"
-	elasticsearchVersion        = "v1"
-	elasticsearchKind           = "Elasticsearch"
 	autoscalingRunnerSetKind    = "AutoscalingRunnerSet"
 	advancedCronJobKind         = "AdvancedCronJob"
 	advancedDaemonSetKind       = "AdvancedDaemonSet"
 	broadcastJobKind            = "BroadcastJob"
 	cloneSetKind                = "CloneSet"
-	cnpgGroup                   = "postgresql.cnpg.io"
-	cnpgVersion                 = "v1"
-	cnpgClusterKind             = "Cluster"
 	cronJobKind                 = "CronJob"
 	daemonSetKind               = "DaemonSet"
 	gatewayKind                 = "Gateway"
@@ -42,19 +37,9 @@ const (
 	kafkaBridgeKind             = "KafkaBridge"
 	kafkaConnectKind            = "KafkaConnect"
 	kafkaMirrorMaker2Kind       = "KafkaMirrorMaker2"
-	mongoDBCommunityGroup       = "mongodbcommunity.mongodb.com"
-	mongoDBCommunityVersion     = "v1"
-	mongoDBCommunityKind        = "MongoDBCommunity"
-	redisGroup                  = "redis.redis.opstreelabs.in"
-	redisVersion                = "v1beta2"
-	redisReplicationKind        = "RedisReplication"
-	redisSentinelKind           = "RedisSentinel"
 	podDisruptionBudgetKind     = "PodDisruptionBudget"
 	postgresqlKind              = "postgresql" // lowercase for postgresqlKind is intentional
 	prometheusKind              = "Prometheus"
-	rabbitmqGroup               = "rabbitmq.com"
-	rabbitmqVersion             = "v1beta1"
-	rabbitmqClusterKind         = "RabbitmqCluster"
 	rolloutKind                 = "Rollout"
 	scaledObjectKind            = "ScaledObject"
 	serviceKind                 = "Service"
@@ -324,10 +309,8 @@ func isSupportedOwnerKind(kind string) bool {
 		autoscalingRunnerSetKind:    {},
 		broadcastJobKind:            {},
 		cloneSetKind:                {},
-		cnpgClusterKind:             {},
 		cronJobKind:                 {},
 		daemonSetKind:               {},
-		elasticsearchKind:           {},
 		deploymentKind:              {},
 		gatewayKind:                 {},
 		horizontalPodAutoscalerKind: {},
@@ -336,13 +319,9 @@ func isSupportedOwnerKind(kind string) bool {
 		kafkaBridgeKind:             {},
 		kafkaConnectKind:            {},
 		kafkaMirrorMaker2Kind:       {},
-		mongoDBCommunityKind:        {},
-		redisReplicationKind:        {},
-		redisSentinelKind:           {},
 		podDisruptionBudgetKind:     {},
 		postgresqlKind:              {},
 		prometheusKind:              {},
-		rabbitmqClusterKind:         {},
 		rolloutKind:                 {},
 		scaledObjectKind:            {},
 		serviceKind:                 {},
@@ -355,6 +334,17 @@ func isSupportedOwnerKind(kind string) bool {
 	return supported
 }
 
+// isDefinedOwner checks whether the owner is a kind described by a registered workload definition.
+// It matches on group and kind, since definitions can share a kind name across operators (e.g. "Cluster").
+func isDefinedOwner(ownerReference *metav1.OwnerReference) bool {
+	groupVersion, err := schema.ParseGroupVersion(ownerReference.APIVersion)
+	if err != nil {
+		return false
+	}
+
+	return definitionByGroupKind(groupVersion.Group, ownerReference.Kind) != nil
+}
+
 // isManagedByOwnerReference checks if the workload is managed by an owner reference that is in the includedResources list.
 func isManagedByOwnerReference(workload Workload) bool {
 	for _, ownerReference := range workload.GetOwnerReferences() {
@@ -362,7 +352,7 @@ func isManagedByOwnerReference(workload Workload) bool {
 			continue
 		}
 
-		if !isSupportedOwnerKind(ownerReference.Kind) {
+		if !isSupportedOwnerKind(ownerReference.Kind) && !isDefinedOwner(&ownerReference) {
 			continue
 		}
 

@@ -9,6 +9,199 @@
 	  "type": "object",
 	  "additionalProperties": { "type": "string" }
 	},
+	"workloadDefinition": {
+	  "type": "object",
+	  "additionalProperties": false,
+	  "required": [
+		"group",
+		"version",
+		"kind"
+	  ],
+	  "properties": {
+		"plural": {
+		  "type": "string",
+		  "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+		},
+		"group": {
+		  "type": "string",
+		  "minLength": 1
+		},
+		"version": {
+		  "type": "string",
+		  "minLength": 1
+		},
+		"kind": {
+		  "type": "string",
+		  "minLength": 1
+		},
+		"replicas": {
+		  "type": "object",
+		  "additionalProperties": false,
+		  "required": [
+			"path"
+		  ],
+		  "properties": {
+			"path": {
+			  "type": "string",
+			  "pattern": "^[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*$"
+			},
+			"minimum": {
+			  "type": "integer",
+			  "minimum": 0
+			}
+		  }
+		},
+		"suspend": {
+		  "type": "object",
+		  "additionalProperties": false,
+		  "required": [
+			"suspendedValue",
+			"resumedValue"
+		  ],
+		  "properties": {
+			"path": {
+			  "type": "string",
+			  "pattern": "^[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*$"
+			},
+			"annotation": {
+			  "type": "string",
+			  "minLength": 1
+			},
+			"suspendedValue": {
+			  "type": "string",
+			  "minLength": 1
+			},
+			"resumedValue": {
+			  "type": "string",
+			  "minLength": 1
+			}
+		  },
+		  "oneOf": [
+			{
+			  "required": [
+				"path"
+			  ]
+			},
+			{
+			  "required": [
+				"annotation"
+			  ]
+			}
+		  ]
+		},
+		"parkGuard": {
+		  "type": "object",
+		  "additionalProperties": false,
+		  "required": [
+			"requireAnnotations"
+		  ],
+		  "properties": {
+			"requireAnnotations": {
+			  "type": "array",
+			  "minItems": 1,
+			  "items": {
+				"type": "string",
+				"minLength": 1
+			  }
+			}
+		  }
+		},
+		"children": {
+		  "type": "array",
+		  "items": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+			  "kind",
+			  "match"
+			],
+			"properties": {
+			  "kind": {
+				"enum": [
+				  "StatefulSet",
+				  "Deployment"
+				]
+			  },
+			  "match": {
+				"enum": [
+				  "ownerReference",
+				  "labelEqualsName"
+				]
+			  },
+			  "label": {
+				"type": "string",
+				"minLength": 1
+			  }
+			},
+			"if": {
+			  "properties": {
+				"match": {
+				  "const": "labelEqualsName"
+				}
+			  }
+			},
+			"then": {
+			  "required": [
+				"label"
+			  ]
+			},
+			"else": {
+			  "not": {
+				"required": [
+				  "label"
+				]
+			  }
+			}
+		  }
+		},
+		"savings": {
+		  "type": "object",
+		  "additionalProperties": false,
+		  "properties": {
+			"groupsPath": {
+			  "type": "string",
+			  "pattern": "^[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*$"
+			},
+			"countPath": {
+			  "type": "string",
+			  "pattern": "^[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*$"
+			},
+			"requestsPath": {
+			  "type": "string",
+			  "pattern": "^[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*$"
+			},
+			"containersPath": {
+			  "type": "string",
+			  "pattern": "^[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*$"
+			}
+		  },
+		  "oneOf": [
+			{
+			  "required": [
+				"requestsPath"
+			  ]
+			},
+			{
+			  "required": [
+				"containersPath"
+			  ]
+			}
+		  ]
+		}
+	  },
+	  "oneOf": [
+		{
+		  "required": [
+			"replicas"
+		  ]
+		},
+		{
+		  "required": [
+			"suspend"
+		  ]
+		}
+	  ]
+	},
 	"probe": {
 	  "type": "object",
 	  "additionalProperties": false,
@@ -161,34 +354,24 @@
 	  "type": "array",
 	  "items": {
 		"type": "string",
-		"enum": [
-		  "deployments",
-		  "statefulsets",
-		  "daemonsets",
-		  "rollouts",
-		  "horizontalpodautoscalers",
-		  "jobs",
-		  "cronjobs",
-		  "scaledobjects",
-		  "stacks",
-		  "prometheuses",
-		  "poddisruptionbudgets",
-		  "autoscalingrunnersets",
-		  "postgresqls",
-		  "kafkaconnects",
-		  "kafkamirrormaker2s",
-		  "kafkabridges",
-		  "services",
-		  "awselbservices",
-		  "awsnlbservices",
-		  "ingresses",
-		  "gateways",
-		  "rabbitmqclusters",
-		  "cnpgclusters",
-		  "elasticsearches",
-		  "mongodbcommunities",
-		  "redisreplications",
-		  "redissentinels"
+		"pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+		"description": "A built-in resource (deployments, statefulsets, daemonsets, rollouts, horizontalpodautoscalers, jobs, cronjobs, scaledobjects, stacks, prometheuses, poddisruptionbudgets, autoscalingrunnersets, postgresqls, kafkaconnects, kafkamirrormaker2s, kafkabridges, services, awselbservices, awsnlbservices, ingresses, gateways, advancedstatefulsets, clonesets, advancedcronjobs, broadcastjobs, imagepulljobs, advanceddaemonsets) or a workloadDefinitions key"
+	  }
+	},
+	"workloadDefinitions": {
+	  "type": "object",
+	  "description": "Operator custom resources scaled by the definition-driven scaler, keyed by the name used in includedResources. Set an entry to null to drop a default.",
+	  "propertyNames": {
+		"pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+	  },
+	  "additionalProperties": {
+		"oneOf": [
+		  {
+			"type": "null"
+		  },
+		  {
+			"$ref": "#/$defs/workloadDefinition"
+		  }
 		]
 	  }
 	},

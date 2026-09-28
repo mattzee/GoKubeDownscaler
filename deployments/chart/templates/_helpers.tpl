@@ -429,66 +429,6 @@ Create defined permissions for roles
     - list
     - update
 {{- end }}
-{{- if eq $resource "rabbitmqclusters" }}
-- apiGroups:
-    - rabbitmq.com
-  resources:
-    - rabbitmqclusters
-  verbs:
-    - get
-    - list
-    - update
-{{- end }}
-{{- if eq $resource "cnpgclusters" }}
-- apiGroups:
-    - postgresql.cnpg.io
-  resources:
-    - clusters
-  verbs:
-    - get
-    - list
-    - update
-{{- end }}
-{{- if eq $resource "elasticsearches" }}
-- apiGroups:
-    - elasticsearch.k8s.elastic.co
-  resources:
-    - elasticsearches
-  verbs:
-    - get
-    - list
-    - update
-{{- end }}
-{{- if eq $resource "mongodbcommunities" }}
-- apiGroups:
-    - mongodbcommunity.mongodb.com
-  resources:
-    - mongodbcommunity
-  verbs:
-    - get
-    - list
-    - update
-{{- end }}
-{{- if eq $resource "redisreplications" }}
-- apiGroups:
-    - redis.redis.opstreelabs.in
-  resources:
-    - redisreplications
-  verbs:
-    - get
-    - list
-    - update
-{{- end }}
-{{- if eq $resource "redissentinels" }}
-- apiGroups:
-    - redis.redis.opstreelabs.in
-  resources:
-    - redissentinels
-  verbs:
-    - get
-    - list
-    - update
-{{- end }}
 {{- if eq $resource "kafkaconnects" }}
 - apiGroups:
     - kafka.strimzi.io
@@ -586,6 +526,7 @@ Create defined permissions for roles
     - update
 {{- end }}
 {{- end }}
+{{- include "go-kube-downscaler.workloadDefinitionPermissions" . }}
 {{- end }}
 
 {{/*
@@ -739,72 +680,6 @@ Create webhook resources
   resources:
     - postgresqls
 {{ end -}}
-{{ if eq $resource "rabbitmqclusters" -}}
-- apiGroups:
-    - rabbitmq.com
-  apiVersions:
-    - "*"
-  operations:
-    - "CREATE"
-    - "UPDATE"
-  resources:
-    - rabbitmqclusters
-{{ end -}}
-{{ if eq $resource "cnpgclusters" -}}
-- apiGroups:
-    - postgresql.cnpg.io
-  apiVersions:
-    - "*"
-  operations:
-    - "CREATE"
-    - "UPDATE"
-  resources:
-    - clusters
-{{ end -}}
-{{ if eq $resource "elasticsearches" -}}
-- apiGroups:
-    - elasticsearch.k8s.elastic.co
-  apiVersions:
-    - "*"
-  operations:
-    - "CREATE"
-    - "UPDATE"
-  resources:
-    - elasticsearches
-{{ end -}}
-{{ if eq $resource "mongodbcommunities" -}}
-- apiGroups:
-    - mongodbcommunity.mongodb.com
-  apiVersions:
-    - "*"
-  operations:
-    - "CREATE"
-    - "UPDATE"
-  resources:
-    - mongodbcommunity
-{{ end -}}
-{{ if eq $resource "redisreplications" -}}
-- apiGroups:
-    - redis.redis.opstreelabs.in
-  apiVersions:
-    - "*"
-  operations:
-    - "CREATE"
-    - "UPDATE"
-  resources:
-    - redisreplications
-{{ end -}}
-{{ if eq $resource "redissentinels" -}}
-- apiGroups:
-    - redis.redis.opstreelabs.in
-  apiVersions:
-    - "*"
-  operations:
-    - "CREATE"
-    - "UPDATE"
-  resources:
-    - redissentinels
-{{ end -}}
 {{- if or (eq $resource "services") (eq $resource "awselbservices") (eq $resource "awsnlbservices")}}
 - apiGroups:
     - ""
@@ -956,6 +831,7 @@ Create webhook resources
     - advanceddaemonsets
 {{ end -}}
 {{ end -}}
+{{- include "go-kube-downscaler.workloadDefinitionRules" (dict "Values" .Values "createUpdate" true) }}
 {{- end }}
 
 
@@ -1137,84 +1013,6 @@ resources include in annotationsCompliance
   resources:
     - postgresqls
 {{ end -}}
-{{ if eq $resource "rabbitmqclusters" -}}
-- apiGroups:
-    - rabbitmq.com
-  apiVersions:
-    - "*"
-  operations:
-  {{- if $createUpdate }}
-    - "CREATE"
-  {{- end }}
-    - "UPDATE"
-  resources:
-    - rabbitmqclusters
-{{ end -}}
-{{ if eq $resource "cnpgclusters" -}}
-- apiGroups:
-    - postgresql.cnpg.io
-  apiVersions:
-    - "*"
-  operations:
-  {{- if $createUpdate }}
-    - "CREATE"
-  {{- end }}
-    - "UPDATE"
-  resources:
-    - clusters
-{{ end -}}
-{{ if eq $resource "elasticsearches" -}}
-- apiGroups:
-    - elasticsearch.k8s.elastic.co
-  apiVersions:
-    - "*"
-  operations:
-  {{- if $createUpdate }}
-    - "CREATE"
-  {{- end }}
-    - "UPDATE"
-  resources:
-    - elasticsearches
-{{ end -}}
-{{ if eq $resource "mongodbcommunities" -}}
-- apiGroups:
-    - mongodbcommunity.mongodb.com
-  apiVersions:
-    - "*"
-  operations:
-  {{- if $createUpdate }}
-    - "CREATE"
-  {{- end }}
-    - "UPDATE"
-  resources:
-    - mongodbcommunity
-{{ end -}}
-{{ if eq $resource "redisreplications" -}}
-- apiGroups:
-    - redis.redis.opstreelabs.in
-  apiVersions:
-    - "*"
-  operations:
-  {{- if $createUpdate }}
-    - "CREATE"
-  {{- end }}
-    - "UPDATE"
-  resources:
-    - redisreplications
-{{ end -}}
-{{ if eq $resource "redissentinels" -}}
-- apiGroups:
-    - redis.redis.opstreelabs.in
-  apiVersions:
-    - "*"
-  operations:
-  {{- if $createUpdate }}
-    - "CREATE"
-  {{- end }}
-    - "UPDATE"
-  resources:
-    - redissentinels
-{{ end -}}
 {{ if eq $resource "kafkaconnects" -}}
 - apiGroups:
     - kafka.strimzi.io
@@ -1384,6 +1182,7 @@ resources include in annotationsCompliance
     - "UPDATE"
 {{- end }}
 {{ end -}}
+{{- include "go-kube-downscaler.workloadDefinitionRules" (dict "Values" .Values "createUpdate" $createUpdate) }}
 {{- end }}
 
 {{/*
@@ -1412,4 +1211,82 @@ Validate annotationsCompliance combinations that JSON Schema cannot express.
     {{- $_ := mustRegexMatch $regex "" -}}
   {{- end -}}
 {{- end -}}
+{{- end }}
+
+{{/*
+Name of the ConfigMap holding the workload definitions.
+*/}}
+{{- define "go-kube-downscaler.workloadDefinitionsConfigMapName" -}}
+{{- printf "%s-workload-definitions" (include "go-kube-downscaler.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
+All workload definitions as the list the downscaler loads, each with its key as
+resource. Entries set to null are dropped, so a default can be removed.
+*/}}
+{{- define "go-kube-downscaler.workloadDefinitionsList" -}}
+{{- $list := list }}
+{{- range $resource, $definition := .Values.workloadDefinitions }}
+{{- if $definition }}
+{{- $list = append $list (merge (dict "resource" $resource) $definition) }}
+{{- end }}
+{{- end }}
+{{- toYaml $list }}
+{{- end }}
+
+{{/*
+RBAC rules for the included workload definitions, plus the apps workloads any of
+them scale as children.
+*/}}
+{{- define "go-kube-downscaler.workloadDefinitionPermissions" -}}
+{{- $definitions := .Values.workloadDefinitions | default dict }}
+{{- $children := dict }}
+{{- range $resource := .Values.includedResources }}
+{{- with index $definitions $resource }}
+- apiGroups:
+    - {{ .group }}
+  resources:
+    - {{ .plural | default $resource }}
+  verbs:
+    - get
+    - list
+    - update
+{{- range .children }}
+{{- $_ := set $children (printf "%ss" (lower .kind)) true }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- range $plural, $_ := $children }}
+- apiGroups:
+    - apps
+  resources:
+    - {{ $plural }}
+  verbs:
+    - get
+    - list
+    - update
+{{- end }}
+{{- end }}
+
+{{/*
+Admission rules for the included workload definitions. createUpdate adds CREATE.
+*/}}
+{{- define "go-kube-downscaler.workloadDefinitionRules" -}}
+{{- $definitions := .Values.workloadDefinitions | default dict }}
+{{- $createUpdate := .createUpdate }}
+{{- range $resource := .Values.includedResources }}
+{{- with index $definitions $resource }}
+- apiGroups:
+    - {{ .group | quote }}
+  apiVersions:
+    - "*"
+  operations:
+  {{- if $createUpdate }}
+    - "CREATE"
+  {{- end }}
+    - "UPDATE"
+  resources:
+    - {{ .plural | default $resource }}
+{{- end }}
+{{- end }}
 {{- end }}

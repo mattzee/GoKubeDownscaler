@@ -49,6 +49,11 @@ func main() {
 		"envScope", fmt.Sprintf("%+v", scopeEnv),
 	)
 
+	if err := scalable.InitDefinitions(config.WorkloadDefinitionsFile, config.IncludeResources); err != nil {
+		slog.Error("invalid workload definitions", "error", err)
+		os.Exit(1)
+	}
+
 	slog.Debug("getting client for kubernetes")
 
 	client, err := kubernetes.NewClient(config.Kubeconfig, config.DryRun, config.Qps, config.Burst, config.Timeout)

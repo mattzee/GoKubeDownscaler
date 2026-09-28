@@ -534,7 +534,7 @@ func (c client) GetNamespaceScope(namespace string, ctx context.Context) (*value
 
 // GetScaledObjects gets all scaledobjects in the specified namespace.
 func (c client) GetScaledObjects(namespace string, ctx context.Context) ([]scalable.Workload, error) {
-	scaledObjects, err := scalable.GetWorkloads("scaledobject", namespace, c.clientsets, ctx)
+	scaledObjects, err := scalable.GetWorkloads(scalable.ScaledObjectsResource, namespace, c.clientsets, ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get scaledobjects: %w", err)
 	}

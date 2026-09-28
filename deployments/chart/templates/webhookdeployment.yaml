@@ -18,15 +18,15 @@ spec:
     metadata:
       labels:
         {{- include "go-kube-downscaler.webhookController.selectorLabels" . | nindent 8 }}
-      {{- if or .Values.webhookController.podAnnotations .Values.forceRestartOnConfigChange }}
       annotations:
+        # Definitions are only read at startup, so a change must roll the pods.
+        checksum/workload-definitions: {{ include "go-kube-downscaler.workloadDefinitionsList" . | sha256sum }}
         {{- if .Values.forceRestartOnConfigChange }}
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         {{- end }}
         {{- with .Values.webhookController.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- end }}
     spec:
       serviceAccountName: {{ include "go-kube-downscaler.webhookController.serviceAccountName" . }}
       {{- if .Values.webhookController.priorityClassName }}
@@ -43,6 +43,7 @@ spec:
           {{- toYaml . | nindent 10 }}
           {{- end }}
           - --include-resources={{ join "," .Values.includedResources }}
+          - --workload-definitions-file=/etc/downscaler/workload-definitions.yaml
           {{- if (not .Values.webhookController.certManager.enabled) }}
           - --internal-cert-rotation
           - --service-name={{ include "go-kube-downscaler.webhookController.fullname" . }}
@@ -77,6 +78,9 @@ spec:
           volumeMounts:
             - name: tls
               mountPath: "/etc/webhook/tls"
+              readOnly: true
+            - name: workload-definitions
+              mountPath: /etc/downscaler
               readOnly: true
           {{- if .Values.webhookController.healthProbes.readinessProbe.enabled }}
           readinessProbe:
@@ -116,6 +120,9 @@ spec:
           secret:
             secretName: {{ include "go-kube-downscaler.webhookController.fullname" . }}
             optional: true
+        - name: workload-definitions
+          configMap:
+            name: {{ include "go-kube-downscaler.workloadDefinitionsConfigMapName" . }}
       {{- with .Values.webhookController.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}

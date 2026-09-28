@@ -189,7 +189,7 @@ This covers the Postgres, CNPG, RabbitMQ, Elasticsearch, MongoDB, Redis, and Kaf
 The downscaler patches the CR and the operator reconciles its own StatefulSets from that change.
 
 The generic `statefulsets` scaler is deliberately kept off StatefulSets owned by these operators.
-Any StatefulSet whose controller owner-reference is one of these kinds is excluded from the generic pass via `supportedOwnerKinds`.
+Any StatefulSet whose controller owner-reference is one of these kinds (matched by API group and kind) is excluded from the generic pass.
 Do not add both a data engine's CR and its StatefulSet to `--include-resources`, or the two scalers fight over the same workload.
 Enable a data engine by including only its CR type.
 
@@ -197,6 +197,10 @@ Some operators do not scale their own workloads down.
 Elasticsearch's `pause-orchestration` stops reconciliation without stopping pods.
 The MongoDBCommunity operator short-circuits once `members` is 0.
 For those the CR scaler also scales the child StatefulSets itself, gated by [downscaler/scale-children](ref:docs-values#scale-children).
+
+The RabbitMQ, CNPG, Elasticsearch, MongoDB and Redis kinds are not compiled in.
+They are [workload definitions](#workload-definitions) shipped as chart defaults, so they can be changed,
+removed or joined by other operators through Helm values alone.
 
 ### Postgresqls
 
@@ -262,6 +266,9 @@ Requires the [Redis Operator by OpsTree Labs](https://github.com/OT-CONTAINER-KI
 
 Scales by setting the replica count to the [downscale replicas](ref:docs-values#downscale-replicas) via `spec.clusterSize`.
 Requires the [Redis Operator by OpsTree Labs](https://github.com/OT-CONTAINER-KIT/redis-operator).
+The CRD forbids a `clusterSize` of 0, so the CR is floored at 1 and the sentinel StatefulSet (owned by the RedisSentinel)
+is scaled to 0 as a child.
+Requires [downscaler/scale-children](ref:docs-values#scale-children) to be enabled.
 
 ### KafkaConnects
 
@@ -341,3 +348,91 @@ Scales by setting the suspend property to true, which halts further scheduled ru
 - resource: advanceddaemonsets.v1beta1.kruise.io
 
 Scales by setting the node selector to match none of the nodes, which stops pods from running on any node.
+
+## Workload Definitions
+
+Operator custom resources that are scaled by one value can be described in configuration instead of code.
+The chart's `workloadDefinitions` value is rendered into a ConfigMap, mounted into the downscaler and the webhook,
+and loaded at startup from [`--workload-definitions-file`](ref:docs-runtime-configuration#workload-definitions-file)
+(default `/etc/downscaler/workload-definitions.yaml`).
+The same value generates the RBAC rules, webhook rules and admission-policy rules, so they cannot drift apart.
+Changing a definition rolls the pods through a checksum annotation.
+
+A definition is only used for resources listed in [`--include-resources`](ref:docs-runtime-configuration#include-resources).
+An invalid definition, or an included resource that is neither built in nor defined, stops the downscaler at startup
+so a bad values change fails the rollout instead of silently skipping workloads.
+
+### Schema
+
+Each key of `workloadDefinitions` is the resource name used in `--include-resources`.
+It must be lowercase and must not be a built-in resource.
+
+| Field                                              | Required                      | Description                                                                                                                                                                                                                                |
+| -------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `group`, `version`, `kind`                         | yes                           | The custom resource's API group, version and kind.                                                                                                                                                                                         |
+| `plural`                                           | no                            | The CRD's plural resource name, used for RBAC and admission rules. Defaults to the key.                                                                                                                                                    |
+| `replicas.path`                                    | one of `replicas` / `suspend` | Dot-separated path to an integer replica field.                                                                                                                                                                                            |
+| `replicas.minimum`                                 | no                            | Downscale targets below this are clamped to it. Default 0.                                                                                                                                                                                 |
+| `suspend.annotation` or `suspend.path`             | one of `replicas` / `suspend` | The annotation, or a dot-separated path to a spec field, that suspends the resource.                                                                                                                                                       |
+| `suspend.suspendedValue`, `suspend.resumedValue`   | with `suspend`                | The values that mean suspended and resumed. A missing annotation or field reads as resumed. For a field, `"true"` and `"false"` are written as booleans.                                                                                   |
+| `parkGuard.requireAnnotations`                     | no                            | Replica-shaped only. Scaling to 0 is refused unless every listed annotation is present. Partial downscales and scale-ups are never blocked.                                                                                                |
+| `children[].kind`                                  | no                            | `StatefulSet` or `Deployment` workloads scaled to 0 with the parent when [downscaler/scale-children](ref:docs-values#scale-children) is enabled.                                                                                           |
+| `children[].match`                                 | with `children`               | `ownerReference` (an owner reference to the parent's group, kind and name) or `labelEqualsName` (the `label` equals the parent's name).                                                                                                    |
+| `children[].label`                                 | with `labelEqualsName`        | The label key to match.                                                                                                                                                                                                                    |
+| `savings.requestsPath` or `savings.containersPath` | no                            | Where one pod's resource requests live, for the saved-resources metric: a requests map, or a container list whose requests are summed. Without `savings` the metric reports 0 for the kind.                                                |
+| `savings.countPath`, `savings.groupsPath`          | no                            | Suspend-shaped only. `countPath` is the number of pods (default 1). With `groupsPath`, the other paths are relative to each item of that list and the results are summed. Replica-shaped kinds multiply by the change in replicas instead. |
+
+### Example
+
+The chart ships the RabbitMQ, CNPG, Elasticsearch, MongoDB and Redis kinds as defaults; see `workloadDefinitions` in the chart's
+`values.yaml` for all of them.
+Two of them show the shapes:
+
+```yaml
+workloadDefinitions:
+  mongodbcommunities:
+    plural: mongodbcommunity
+    group: mongodbcommunity.mongodb.com
+    version: v1
+    kind: MongoDBCommunity
+    replicas:
+      path: spec.members
+    parkGuard:
+      requireAnnotations:
+        - mongodb.com/v1.lastSuccessfulConfiguration
+    children:
+      - kind: StatefulSet
+        match: ownerReference
+    savings:
+      containersPath: spec.statefulSet.spec.template.spec.containers
+  cnpgclusters:
+    plural: clusters
+    group: postgresql.cnpg.io
+    version: v1
+    kind: Cluster
+    suspend:
+      annotation: cnpg.io/hibernation
+      suspendedValue: "on"
+      resumedValue: "off"
+    savings:
+      requestsPath: spec.resources.requests
+      countPath: spec.instances
+```
+
+Set a key to `null` to drop a default, and add `includedResources` entries for the definitions you want scaled.
+
+### Adding an Operator
+
+1. Find the one value that parks the resource.
+   If it is an integer count, the definition is replica-shaped.
+   If it is a flag or annotation that the operator honours, it is suspend-shaped.
+2. Check whether the operator keeps pods running after that change, as ECK does when paused or the MongoDB operator does at 0 members.
+   If it does, add `children` so the downscaler scales the StatefulSets or Deployments itself.
+3. Check whether the operator can recover from a park in any state.
+   If not, add a `parkGuard` for the annotation that marks a safe state.
+4. Check whether the CRD forbids 0.
+   If it does, set `replicas.minimum` and let a child carry the park.
+5. Add the key to `includedResources` and roll out.
+   The downscaler logs `loaded workload definitions` with the registered resources.
+
+Anything that cannot be expressed this way still needs a scaler in code, as the built-in types above do.

@@ -151,7 +151,7 @@ func buildScaledObjectFromBytes(t *testing.T, namespace string) scalable.Workloa
 		}
 	}`)
 
-	soWorkload, err := scalable.ParseWorkloadFromRawObject("scaledobject", rawSo)
+	soWorkload, err := scalable.ParseWorkloadFromRawObject("keda.sh", "ScaledObject", "scaledobject", rawSo)
 	if err != nil {
 		t.Fatalf("failed to parse scaledobject from bytes: %v", err)
 	}
@@ -356,7 +356,7 @@ func TestEvaluateMutation(t *testing.T) {
 
 			req := currentTest.request(t)
 			input, _ := parseAdmissionReviewFromRequest(req)
-			workload, _ := scalable.ParseWorkloadFromRawObject("deployment", input.Request.Object.Raw)
+			workload, _ := scalable.ParseWorkloadFromRawObject("apps", "Deployment", "deployment", input.Request.Object.Raw)
 
 			resp, err := handler.evaluateWorkloadMutation(context.Background(), workload, input, false, slog.Default())
 			require.NoError(t, err)

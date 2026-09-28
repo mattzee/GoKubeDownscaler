@@ -13,6 +13,7 @@ import (
 	"github.com/caas-team/gokubedownscaler/internal/api/kubernetes"
 	"github.com/caas-team/gokubedownscaler/internal/api/kubernetes/admission"
 	"github.com/caas-team/gokubedownscaler/internal/pkg/metrics"
+	"github.com/caas-team/gokubedownscaler/internal/pkg/scalable"
 	"github.com/caas-team/gokubedownscaler/internal/pkg/values"
 	apimachineryruntime "k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -49,6 +50,11 @@ const (
 
 func main() {
 	config, scopeDefault, scopeCli, scopeEnv := initComponent()
+
+	if err := scalable.InitDefinitions(config.WorkloadDefinitionsFile, config.IncludeResources); err != nil {
+		slog.Error("invalid workload definitions", "error", err)
+		os.Exit(1)
+	}
 
 	scheme := apimachineryruntime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
