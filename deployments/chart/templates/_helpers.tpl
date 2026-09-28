@@ -1290,3 +1290,26 @@ Admission rules for the included workload definitions. createUpdate adds CREATE.
 {{- end }}
 {{- end }}
 {{- end }}
+
+{{/*
+Built-in resource names, as the downscaler's --include-resources accepts them.
+TestChartBuiltinResources keeps this list in step with the code.
+*/}}
+{{- define "go-kube-downscaler.builtinResources" -}}
+advancedcronjobs advanceddaemonsets advancedstatefulsets autoscalingrunnersets awselbservices awsnlbservices broadcastjobs clonesets cronjobs daemonsets deployments gateways horizontalpodautoscalers imagepulljobs ingresses jobs kafkabridges kafkaconnects kafkamirrormaker2s kruisestatefulsets poddisruptionbudgets postgresqls prometheuses rollouts scaledobjects services stacks statefulsets
+{{- end }}
+
+{{/*
+Fail the render when an includedResources entry is neither built in nor a
+workloadDefinitions key: a typo, or a default dropped with null while still
+included. Without this the downscaler would refuse to start after the install.
+*/}}
+{{- define "go-kube-downscaler.includedResources.validate" -}}
+{{- $builtins := splitList " " (include "go-kube-downscaler.builtinResources" .) }}
+{{- $definitions := .Values.workloadDefinitions | default dict }}
+{{- range $resource := .Values.includedResources }}
+{{- if not (or (has $resource $builtins) (index $definitions $resource)) }}
+{{- fail (printf "includedResources entry %q is neither a built-in resource nor defined in workloadDefinitions" $resource) }}
+{{- end }}
+{{- end }}
+{{- end }}

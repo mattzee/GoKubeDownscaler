@@ -1,3 +1,4 @@
+{{- include "go-kube-downscaler.includedResources.validate" . }}
 apiVersion: v1
 kind: ConfigMap
 metadata:

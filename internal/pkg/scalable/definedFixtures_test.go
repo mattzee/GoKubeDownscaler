@@ -3,7 +3,9 @@ package scalable
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/caas-team/gokubedownscaler/internal/pkg/definitions"
@@ -51,6 +53,30 @@ func chartDefaultDefinitions(t *testing.T) map[string]*definitions.Definition {
 	}
 
 	return byResource
+}
+
+// TestChartBuiltinResources keeps the chart's built-in resource list, which it uses to
+// reject includedResources typos at render time, in step with builtinResourceFuncs.
+func TestChartBuiltinResources(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "deployments", "chart", "templates", "_helpers.tpl"))
+	require.NoError(t, err)
+
+	match := regexp.MustCompile(`(?s)define "go-kube-downscaler\.builtinResources" -\}\}\n(.*?)\n\{\{- end`).FindSubmatch(data)
+	require.NotNil(t, match, "the chart must define go-kube-downscaler.builtinResources")
+
+	chart := strings.Fields(string(match[1]))
+	sort.Strings(chart)
+
+	code := make([]string, 0, len(builtinResourceFuncs()))
+	for name := range builtinResourceFuncs() {
+		code = append(code, name)
+	}
+
+	sort.Strings(code)
+
+	require.Equal(t, code, chart, "update go-kube-downscaler.builtinResources in the chart's _helpers.tpl")
 }
 
 // newFixture builds an unstructured custom resource for tests.

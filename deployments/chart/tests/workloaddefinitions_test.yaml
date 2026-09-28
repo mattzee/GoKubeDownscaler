@@ -141,3 +141,35 @@ tests:
           kind: Thing
     asserts:
       - failedTemplate: {}
+
+  - it: rejects an includedResources typo
+    template: workloaddefinitionsconfigmap.yaml
+    set:
+      includedResources: [deploymennts]
+    asserts:
+      - failedTemplate:
+          errorPattern: 'includedResources entry "deploymennts" is neither a built-in resource nor defined in workloadDefinitions'
+
+  - it: rejects an included resource whose default definition was dropped
+    template: workloaddefinitionsconfigmap.yaml
+    set:
+      includedResources: [deployments, cnpgclusters]
+      workloadDefinitions:
+        cnpgclusters: null
+    asserts:
+      - failedTemplate:
+          errorPattern: 'includedResources entry "cnpgclusters" is neither'
+
+  - it: accepts built-in, default and user-defined resources together
+    template: workloaddefinitionsconfigmap.yaml
+    set:
+      includedResources: [deployments, scaledobjects, cnpgclusters, things]
+      workloadDefinitions:
+        things:
+          group: example.com
+          version: v1
+          kind: Thing
+          replicas:
+            path: spec.size
+    asserts:
+      - hasDocuments: { count: 1 }
