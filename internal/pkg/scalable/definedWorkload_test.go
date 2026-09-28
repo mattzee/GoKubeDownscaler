@@ -198,13 +198,13 @@ func TestDefinedSuspendResource_Annotation(t *testing.T) {
 	assert.Equal(t, values.BooleanReplicas(false), current, "a missing annotation reads as resumed")
 	assert.Equal(t, values.BooleanReplicas(true), target)
 
-	resource.setSuspend(true)
+	require.NoError(t, resource.setSuspend(true))
 	assert.Equal(t, map[string]string{"cnpg.io/hibernation": "on", "other": "kept"}, obj.GetAnnotations())
 
 	current, _ = resource.getSuspend()
 	assert.Equal(t, values.BooleanReplicas(true), current)
 
-	resource.setSuspend(false)
+	require.NoError(t, resource.setSuspend(false))
 	assert.Equal(t, map[string]string{"cnpg.io/hibernation": "off", "other": "kept"}, obj.GetAnnotations())
 }
 
@@ -226,7 +226,7 @@ func TestDefinedSuspendResource_Path(t *testing.T) {
 	current, _ := boolResource.getSuspend()
 	assert.Equal(t, values.BooleanReplicas(false), current)
 
-	boolResource.setSuspend(true)
+	require.NoError(t, boolResource.setSuspend(true))
 
 	got, found, _ := unstructured.NestedBool(boolObj.Object, "spec", "suspend")
 	assert.True(t, found)
@@ -241,10 +241,23 @@ func TestDefinedSuspendResource_Path(t *testing.T) {
 	current, _ = stringResource.getSuspend()
 	assert.Equal(t, values.BooleanReplicas(false), current, "a missing field reads as resumed")
 
-	stringResource.setSuspend(true)
+	require.NoError(t, stringResource.setSuspend(true))
 
 	state, _, _ := unstructured.NestedString(stringObj.Object, "spec", "state")
 	assert.Equal(t, "Stopped", state)
+
+	// spec.suspend is a string here, so spec.suspend.value cannot be written. The park must
+	// fail without recording an original, so the workload is not reported as parked.
+	brokenDef := &definitions.Definition{
+		Resource: "broken", Group: "example.com", Version: "v1", Kind: "Broken",
+		Suspend: &definitions.Suspend{Path: "spec.suspend.value", SuspendedValue: "true", ResumedValue: "false"},
+	}
+	brokenObj := newFixture("example.com/v1", "Broken", nil, map[string]any{"suspend": "not-an-object"})
+	brokenWorkload := newDefinedWorkload(brokenObj, brokenDef)
+
+	_, err := brokenWorkload.ScaleDown(values.AbsoluteReplicas(0), nil)
+	require.Error(t, err)
+	assert.NotContains(t, brokenObj.GetAnnotations(), annotationOriginalReplicas, "a failed suspend must not be recorded as a park")
 }
 
 func TestDefinedWorkload_SavedResources(t *testing.T) {

@@ -207,8 +207,9 @@ func (d *definedSuspendResource) suspendValue() string {
 }
 
 // setSuspend writes the suspended or resumed value. For a field path, "true" and
-// "false" are written as booleans and anything else as a string.
-func (d *definedSuspendResource) setSuspend(suspend bool) {
+// "false" are written as booleans and anything else as a string. It fails when the
+// path cannot be written, e.g. because a segment of it is not an object.
+func (d *definedSuspendResource) setSuspend(suspend bool) error {
 	value := d.def.Suspend.ResumedValue
 	if suspend {
 		value = d.def.Suspend.SuspendedValue
@@ -223,7 +224,7 @@ func (d *definedSuspendResource) setSuspend(suspend bool) {
 		annotations[d.def.Suspend.Annotation] = value
 		d.SetAnnotations(annotations)
 
-		return
+		return nil
 	}
 
 	var fieldValue any = value
@@ -231,10 +232,12 @@ func (d *definedSuspendResource) setSuspend(suspend bool) {
 		fieldValue = value == "true"
 	}
 
-	if err := unstructured.SetNestedField(d.Object, fieldValue, definitions.SplitPath(d.def.Suspend.Path)...); err != nil {
-		slog.Error("failed to set suspend field", "path", d.def.Suspend.Path,
-			"kind", d.GetKind(), "namespace", d.GetNamespace(), "name", d.GetName(), "error", err)
+	path := d.def.Suspend.Path
+	if err := unstructured.SetNestedField(d.Object, fieldValue, definitions.SplitPath(path)...); err != nil {
+		return fmt.Errorf("failed to set %s for %s %s/%s: %w", path, d.GetKind(), d.GetNamespace(), d.GetName(), err)
 	}
+
+	return nil
 }
 
 // getSavedResourcesRequests returns the requests of every pod the suspend removes.

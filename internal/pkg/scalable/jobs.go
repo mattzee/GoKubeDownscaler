@@ -58,8 +58,10 @@ func (j *job) getSuspend() (currentValue, targetDownscaleState values.Replicas) 
 }
 
 // setSuspend sets the value of the suspend field on the job.
-func (j *job) setSuspend(suspend bool) {
+func (j *job) setSuspend(suspend bool) error {
 	j.Spec.Suspend = &suspend
+
+	return nil
 }
 
 // Reget regets the resource from the Kubernetes API.

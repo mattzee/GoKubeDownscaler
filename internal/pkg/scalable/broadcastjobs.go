@@ -53,8 +53,10 @@ func (b *broadcastJob) getSuspend() (currentValue, targetDownscaleState values.R
 }
 
 // setSuspend sets the value of the paused field on the BroadcastJob.
-func (b *broadcastJob) setSuspend(suspend bool) {
+func (b *broadcastJob) setSuspend(suspend bool) error {
 	b.Spec.Paused = suspend
+
+	return nil
 }
 
 // Reget regets the resource from the Kubernetes API.
