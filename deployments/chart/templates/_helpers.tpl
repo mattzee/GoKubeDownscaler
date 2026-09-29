@@ -1221,12 +1221,24 @@ Name of the ConfigMap holding the workload definitions.
 {{- end }}
 
 {{/*
+"true" when an includedResources entry has a workload definition. Everything that
+wires definitions into the pods is gated on it, so installs that don't use
+definitions render exactly as before.
+*/}}
+{{- define "go-kube-downscaler.hasIncludedDefinitions" -}}
+{{- $definitions := .Values.workloadDefinitions | default dict }}
+{{- range $resource := .Values.includedResources }}
+{{- if index $definitions $resource }}true{{ end }}
+{{- end }}
+{{- end }}
+
+{{/*
 All workload definitions as the list the downscaler loads, each with its key as
 resource. Entries set to null are dropped, so a default can be removed.
 */}}
 {{- define "go-kube-downscaler.workloadDefinitionsList" -}}
 {{- $list := list }}
-{{- range $resource, $definition := .Values.workloadDefinitions }}
+{{- range $resource, $definition := .Values.workloadDefinitions | default dict }}
 {{- if $definition }}
 {{- $list = append $list (merge (dict "resource" $resource) $definition) }}
 {{- end }}

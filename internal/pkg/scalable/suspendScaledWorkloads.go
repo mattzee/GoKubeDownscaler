@@ -58,6 +58,22 @@ func (r *suspendScaledWorkload) GetChildren(ctx context.Context, clientsets *Cli
 	return children, nil
 }
 
+// GetRequiredChildren delegates to the wrapped resource when it has children that
+// must be scaled even with scale-children off.
+func (r *suspendScaledWorkload) GetRequiredChildren(ctx context.Context, clientsets *Clientsets) ([]Workload, error) {
+	parent, ok := r.suspendScaledResource.(RequiredChildrenWorkload)
+	if !ok {
+		return nil, nil
+	}
+
+	children, err := parent.GetRequiredChildren(ctx, clientsets)
+	if err != nil {
+		return nil, fmt.Errorf("get required children from parent workload: %w", err)
+	}
+
+	return children, nil
+}
+
 // ScaleUp scales up the underlying suspendScaledResource.
 func (r *suspendScaledWorkload) ScaleUp(logger *slog.Logger) (scalingSummary, error) {
 	if logger == nil {

@@ -131,6 +131,9 @@
 			  "label": {
 				"type": "string",
 				"minLength": 1
+			  },
+			  "always": {
+				"type": "boolean"
 			  }
 			},
 			"if": {
@@ -359,8 +362,8 @@
 	  }
 	},
 	"workloadDefinitions": {
-	  "type": "object",
-	  "description": "Operator custom resources scaled by the definition-driven scaler, keyed by the name used in includedResources. Set an entry to null to drop a default.",
+	  "type": ["object", "null"],
+	  "description": "Operator custom resources scaled by the definition-driven scaler, keyed by the name used in includedResources. None by default.",
 	  "propertyNames": {
 		"pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
 	  },

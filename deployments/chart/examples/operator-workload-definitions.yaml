@@ -1,0 +1,87 @@
+# Workload definitions for common data-tier operators. The chart ships none by
+# default, so installs that don't set workloadDefinitions are unaffected. Add this
+# file with `-f` (or copy the entries you need), then list the resources you want
+# scaled in includedResources, e.g. `includedResources: [deployments, elasticsearches]`.
+# Definitions that aren't in includedResources are loaded but never scaled.
+workloadDefinitions:
+  rabbitmqclusters:
+    group: rabbitmq.com
+    version: v1beta1
+    kind: RabbitmqCluster
+    replicas:
+      path: spec.replicas
+    savings:
+      requestsPath: spec.resources.requests
+  cnpgclusters:
+    plural: clusters
+    group: postgresql.cnpg.io
+    version: v1
+    kind: Cluster
+    suspend:
+      annotation: cnpg.io/hibernation
+      suspendedValue: "on"
+      resumedValue: "off"
+    savings:
+      requestsPath: spec.resources.requests
+      countPath: spec.instances
+  elasticsearches:
+    group: elasticsearch.k8s.elastic.co
+    version: v1
+    kind: Elasticsearch
+    # Pausing orchestration leaves the node pods running, so the node-set
+    # StatefulSets are scaled as children.
+    suspend:
+      annotation: eck.k8s.elastic.co/pause-orchestration
+      suspendedValue: "true"
+      resumedValue: "false"
+    children:
+      - kind: StatefulSet
+        match: labelEqualsName
+        label: elasticsearch.k8s.elastic.co/cluster-name
+        always: true
+    savings:
+      groupsPath: spec.nodeSets
+      countPath: count
+      containersPath: podTemplate.spec.containers
+  mongodbcommunities:
+    plural: mongodbcommunity
+    group: mongodbcommunity.mongodb.com
+    version: v1
+    kind: MongoDBCommunity
+    # The operator stops reconciling at members 0, so the StatefulSet is scaled
+    # as a child. Parking before the operator has recorded a known-good config
+    # risks it never coming back, so that is refused.
+    replicas:
+      path: spec.members
+    parkGuard:
+      requireAnnotations:
+        - mongodb.com/v1.lastSuccessfulConfiguration
+    children:
+      - kind: StatefulSet
+        match: ownerReference
+        always: true
+    savings:
+      containersPath: spec.statefulSet.spec.template.spec.containers
+  redisreplications:
+    group: redis.redis.opstreelabs.in
+    version: v1beta2
+    kind: RedisReplication
+    replicas:
+      path: spec.clusterSize
+    savings:
+      requestsPath: spec.kubernetesConfig.resources.requests
+  redissentinels:
+    group: redis.redis.opstreelabs.in
+    version: v1beta2
+    kind: RedisSentinel
+    # The CRD forbids clusterSize 0, so the CR is floored at 1 and the
+    # StatefulSet carries the park as a child.
+    replicas:
+      path: spec.clusterSize
+      minimum: 1
+    children:
+      - kind: StatefulSet
+        match: ownerReference
+        always: true
+    savings:
+      requestsPath: spec.kubernetesConfig.resources.requests

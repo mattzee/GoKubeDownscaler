@@ -149,6 +149,12 @@ type ParentWorkload interface {
 	GetChildren(ctx context.Context, clientsets *Clientsets) ([]Workload, error)
 }
 
+// RequiredChildrenWorkload is a workload with children that are scaled with it even
+// when scale-children is off, because scaling the parent alone leaves the pods running.
+type RequiredChildrenWorkload interface {
+	GetRequiredChildren(ctx context.Context, clientsets *Clientsets) ([]Workload, error)
+}
+
 type PercentageWorkload interface {
 	AllowPercentageReplicas() bool
 }

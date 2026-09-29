@@ -351,9 +351,22 @@ func (d *definedResource) Update(clientsets *Clientsets, ctx context.Context) er
 // GetChildren returns the workloads matched by the definition's children, wrapped
 // as replica-scaled workloads so they are scaled to 0 with the parent.
 func (d *definedResource) GetChildren(ctx context.Context, clientsets *Clientsets) ([]Workload, error) {
+	return d.listChildren(ctx, clientsets, false)
+}
+
+// GetRequiredChildren returns only the children marked always.
+func (d *definedResource) GetRequiredChildren(ctx context.Context, clientsets *Clientsets) ([]Workload, error) {
+	return d.listChildren(ctx, clientsets, true)
+}
+
+func (d *definedResource) listChildren(ctx context.Context, clientsets *Clientsets, requiredOnly bool) ([]Workload, error) {
 	var results []Workload
 
 	for _, child := range d.def.Children {
+		if requiredOnly && !child.Always {
+			continue
+		}
+
 		children, err := d.getChildren(ctx, clientsets, child)
 		if err != nil {
 			return nil, err

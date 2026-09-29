@@ -3,16 +3,55 @@ release:
   name: gkd
   namespace: downscaler
 tests:
+  - it: ships no definitions wiring by default
+    templates: [workloaddefinitionsconfigmap.yaml, deployment.yaml, webhookdeployment.yaml]
+    set:
+      webhookController.enabled: true
+    asserts:
+      - hasDocuments: { count: 0 }
+        template: workloaddefinitionsconfigmap.yaml
+      - notContains:
+          path: 'spec.template.spec.containers[0].args'
+          content: --workload-definitions-file=/etc/downscaler/workload-definitions.yaml
+        template: deployment.yaml
+      - notExists: { path: spec.template.spec.volumes }
+        template: deployment.yaml
+      - notExists: { path: 'spec.template.metadata.annotations["checksum/workload-definitions"]' }
+        template: webhookdeployment.yaml
+      - notContains:
+          path: 'spec.template.spec.containers[0].args'
+          content: --workload-definitions-file=/etc/downscaler/workload-definitions.yaml
+        template: webhookdeployment.yaml
+      - lengthEqual: { path: spec.template.spec.volumes, count: 1 }
+        template: webhookdeployment.yaml
+
+  - it: ships no definitions wiring when definitions are set but none are included
+    templates: [workloaddefinitionsconfigmap.yaml, deployment.yaml]
+    values:
+      - ../examples/operator-workload-definitions.yaml
+    asserts:
+      - hasDocuments: { count: 0 }
+        template: workloaddefinitionsconfigmap.yaml
+      - notExists: { path: spec.template.spec.volumes }
+        template: deployment.yaml
+
   - it: ships the operator definitions in a ConfigMap keyed by resource
     template: workloaddefinitionsconfigmap.yaml
+    values:
+      - ../examples/operator-workload-definitions.yaml
+    set:
+      includedResources: [deployments, cnpgclusters]
     asserts:
       - equal: { path: metadata.name, value: gkd-go-kube-downscaler-workload-definitions }
       - matchRegex: { path: 'data["workload-definitions.yaml"]', pattern: '(?m)^- group: postgresql\.cnpg\.io$' }
       - matchRegex: { path: 'data["workload-definitions.yaml"]', pattern: '(?m)^  resource: redissentinels$' }
 
-  - it: drops a default set to null and adds a user definition
+  - it: drops an example set to null and adds a user definition
     template: workloaddefinitionsconfigmap.yaml
+    values:
+      - ../examples/operator-workload-definitions.yaml
     set:
+      includedResources: [things]
       workloadDefinitions:
         cnpgclusters: null
         things:
@@ -27,6 +66,10 @@ tests:
 
   - it: mounts the definitions into the controller and rolls it when they change
     template: deployment.yaml
+    values:
+      - ../examples/operator-workload-definitions.yaml
+    set:
+      includedResources: [deployments, rabbitmqclusters]
     asserts:
       - contains:
           path: 'spec.template.spec.containers[0].args'
@@ -41,7 +84,10 @@ tests:
 
   - it: keeps the checksum even when config restarts are off
     template: deployment.yaml
+    values:
+      - ../examples/operator-workload-definitions.yaml
     set:
+      includedResources: [deployments, rabbitmqclusters]
       forceRestartOnConfigChange: false
     asserts:
       - exists: { path: 'spec.template.metadata.annotations["checksum/workload-definitions"]' }
@@ -49,7 +95,10 @@ tests:
 
   - it: mounts the definitions into the webhook
     template: webhookdeployment.yaml
+    values:
+      - ../examples/operator-workload-definitions.yaml
     set:
+      includedResources: [deployments, rabbitmqclusters]
       webhookController.enabled: true
     asserts:
       - contains:
@@ -63,6 +112,8 @@ tests:
   - it: grants RBAC only for included definitions, using the CRD plural
     template: clusterrole.yaml
     documentIndex: 0
+    values:
+      - ../examples/operator-workload-definitions.yaml
     set:
       includedResources: [deployments, cnpgclusters, rabbitmqclusters]
     asserts:
@@ -82,6 +133,8 @@ tests:
   - it: grants the child StatefulSet RBAC when a definition has children
     template: clusterrole.yaml
     documentIndex: 0
+    values:
+      - ../examples/operator-workload-definitions.yaml
     set:
       includedResources: [deployments, mongodbcommunities]
     asserts:
@@ -118,6 +171,8 @@ tests:
 
   - it: generates webhook rules for included definitions
     template: mutatingwebhookconfiguration.yaml
+    values:
+      - ../examples/operator-workload-definitions.yaml
     set:
       webhookController.enabled: true
       includedResources: [deployments, cnpgclusters]
@@ -150,8 +205,10 @@ tests:
       - failedTemplate:
           errorPattern: 'includedResources entry "deploymennts" is neither a built-in resource nor defined in workloadDefinitions'
 
-  - it: rejects an included resource whose default definition was dropped
+  - it: rejects an included resource whose example definition was dropped
     template: workloaddefinitionsconfigmap.yaml
+    values:
+      - ../examples/operator-workload-definitions.yaml
     set:
       includedResources: [deployments, cnpgclusters]
       workloadDefinitions:
@@ -160,8 +217,10 @@ tests:
       - failedTemplate:
           errorPattern: 'includedResources entry "cnpgclusters" is neither'
 
-  - it: accepts built-in, default and user-defined resources together
+  - it: accepts built-in, example and user-defined resources together
     template: workloaddefinitionsconfigmap.yaml
+    values:
+      - ../examples/operator-workload-definitions.yaml
     set:
       includedResources: [deployments, scaledobjects, cnpgclusters, things]
       workloadDefinitions:

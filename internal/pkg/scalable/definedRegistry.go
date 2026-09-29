@@ -17,6 +17,46 @@ import (
 type definitionRegistry struct {
 	byResource  map[string]*definitions.Definition
 	byGroupKind map[schema.GroupKind]*definitions.Definition
+	// included holds the resource names of definitions that are in includedResources.
+	included map[string]struct{}
+}
+
+const (
+	appsGroup       = "apps"
+	kruiseAppsGroup = "apps.kruise.io"
+)
+
+// builtinGroupKinds are the group/kinds the built-in scalers and webhook parsers
+// handle. A definition may not claim one, since definitions are checked first and
+// would silently take the kind over.
+//
+//nolint:gochecknoglobals // read-only lookup table
+var builtinGroupKinds = map[schema.GroupKind]struct{}{
+	{Group: appsGroup, Kind: deploymentKind}:                      {},
+	{Group: appsGroup, Kind: statefulSetKind}:                     {},
+	{Group: appsGroup, Kind: daemonSetKind}:                       {},
+	{Group: "batch", Kind: jobKind}:                               {},
+	{Group: "batch", Kind: cronJobKind}:                           {},
+	{Group: "autoscaling", Kind: horizontalPodAutoscalerKind}:     {},
+	{Group: "policy", Kind: podDisruptionBudgetKind}:              {},
+	{Group: "", Kind: serviceKind}:                                {},
+	{Group: "networking.k8s.io", Kind: ingressKind}:               {},
+	{Group: "gateway.networking.k8s.io", Kind: gatewayKind}:       {},
+	{Group: "keda.sh", Kind: scaledObjectKind}:                    {},
+	{Group: "argoproj.io", Kind: rolloutKind}:                     {},
+	{Group: "zalando.org", Kind: stackKind}:                       {},
+	{Group: "monitoring.coreos.com", Kind: prometheusKind}:        {},
+	{Group: "actions.github.com", Kind: autoscalingRunnerSetKind}: {},
+	{Group: "acid.zalan.do", Kind: postgresqlKind}:                {},
+	{Group: kafkaStrimziGroup, Kind: kafkaConnectKind}:            {},
+	{Group: kafkaStrimziGroup, Kind: kafkaMirrorMaker2Kind}:       {},
+	{Group: kafkaStrimziGroup, Kind: kafkaBridgeKind}:             {},
+	{Group: kruiseAppsGroup, Kind: statefulSetKind}:               {},
+	{Group: kruiseAppsGroup, Kind: daemonSetKind}:                 {},
+	{Group: kruiseAppsGroup, Kind: cloneSetKind}:                  {},
+	{Group: kruiseAppsGroup, Kind: advancedCronJobKind}:           {},
+	{Group: kruiseAppsGroup, Kind: broadcastJobKind}:              {},
+	{Group: kruiseAppsGroup, Kind: "ImagePullJob"}:                {},
 }
 
 // registeredDefinitions is the process-wide definition registry. It is a global
@@ -29,23 +69,38 @@ type definitionRegistry struct {
 var registeredDefinitions atomic.Pointer[definitionRegistry]
 
 // RegisterDefinitions replaces the registered workload definitions. It fails if a
-// definition's resource name shadows a built-in resource.
-func RegisterDefinitions(defs []definitions.Definition) error {
+// definition's resource name or group/kind shadows a built-in resource.
+// includeResources marks which definitions are in use.
+func RegisterDefinitions(defs []definitions.Definition, includeResources []string) error {
 	builtins := builtinResourceFuncs()
 	registry := &definitionRegistry{
 		byResource:  make(map[string]*definitions.Definition, len(defs)),
 		byGroupKind: make(map[schema.GroupKind]*definitions.Definition, len(defs)),
+		included:    make(map[string]struct{}, len(includeResources)),
 	}
 
 	for i := range defs {
 		def := &defs[i]
+		groupKind := schema.GroupKind{Group: def.Group, Kind: def.Kind}
 
 		if _, builtin := builtins[def.Resource]; builtin {
 			return fmt.Errorf("%w: resource %q is a built-in resource", definitions.ErrInvalidDefinition, def.Resource)
 		}
 
+		if _, builtin := builtinGroupKinds[groupKind]; builtin {
+			return fmt.Errorf("%w: resource %q uses %s, which a built-in resource already handles",
+				definitions.ErrInvalidDefinition, def.Resource, groupKind)
+		}
+
 		registry.byResource[def.Resource] = def
-		registry.byGroupKind[schema.GroupKind{Group: def.Group, Kind: def.Kind}] = def
+		registry.byGroupKind[groupKind] = def
+	}
+
+	for _, resource := range includeResources {
+		resource = strings.ToLower(resource)
+		if _, defined := registry.byResource[resource]; defined {
+			registry.included[resource] = struct{}{}
+		}
 	}
 
 	registeredDefinitions.Store(registry)
@@ -66,7 +121,7 @@ func InitDefinitions(path string, includeResources []string) error {
 		return fmt.Errorf("failed to load workload definitions: %w", err)
 	}
 
-	if err = RegisterDefinitions(defs); err != nil {
+	if err = RegisterDefinitions(defs, includeResources); err != nil {
 		return fmt.Errorf("failed to register workload definitions: %w", err)
 	}
 
@@ -86,6 +141,31 @@ func InitDefinitions(path string, includeResources []string) error {
 	}
 
 	return nil
+}
+
+// IncludedDefinitionsWithOptionalChildren returns the sorted included definitions that
+// have children not marked always. Those children are only scaled with scale-children on.
+func IncludedDefinitionsWithOptionalChildren() []string {
+	registry := registeredDefinitions.Load()
+	if registry == nil {
+		return nil
+	}
+
+	var names []string
+
+	for resource := range registry.included {
+		for _, child := range registry.byResource[resource].Children {
+			if !child.Always {
+				names = append(names, resource)
+
+				break
+			}
+		}
+	}
+
+	sort.Strings(names)
+
+	return names
 }
 
 // IsSupportedResource reports whether resource is a built-in or registered resource name.
@@ -121,6 +201,18 @@ func definitionByResource(resource string) *definitions.Definition {
 	}
 
 	return registry.byResource[resource]
+}
+
+// isIncludedDefinition reports whether the definition's resource is in includedResources.
+func isIncludedDefinition(def *definitions.Definition) bool {
+	registry := registeredDefinitions.Load()
+	if registry == nil {
+		return false
+	}
+
+	_, included := registry.included[def.Resource]
+
+	return included
 }
 
 func definitionByGroupKind(group, kind string) *definitions.Definition {

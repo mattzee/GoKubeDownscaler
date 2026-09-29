@@ -74,6 +74,8 @@ type Client interface {
 	addEvent(eventType, reason, identifier, message string, object *corev1.ObjectReference, ctx context.Context) error
 	// GetChildrenWorkloads gets the children workloads of the specified workload
 	GetChildrenWorkloads(workload scalable.Workload, ctx context.Context) ([]scalable.Workload, error)
+	// GetRequiredChildrenWorkloads gets the children that are scaled with the workload even when scale-children is off
+	GetRequiredChildrenWorkloads(workload scalable.Workload, ctx context.Context) ([]scalable.Workload, error)
 }
 
 // NewClient makes a new Client.
@@ -254,6 +256,21 @@ func (c client) GetChildrenWorkloads(workload scalable.Workload, ctx context.Con
 	}
 
 	return nil, nil
+}
+
+// GetRequiredChildrenWorkloads gets the children of the workload that are scaled with it even when scale-children is off.
+func (c client) GetRequiredChildrenWorkloads(workload scalable.Workload, ctx context.Context) ([]scalable.Workload, error) {
+	parent, ok := workload.(scalable.RequiredChildrenWorkload)
+	if !ok {
+		return nil, nil
+	}
+
+	children, err := parent.GetRequiredChildren(ctx, c.clientsets)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get required children workloads: %w", err)
+	}
+
+	return children, nil
 }
 
 // RegetWorkload gets the workload again to ensure the latest state.

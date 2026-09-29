@@ -54,6 +54,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	startupScopes := values.Scopes{values.NewScope(), values.NewScope(), scopeCli, scopeEnv, scopeDefault}
+	if resources := scalable.IncludedDefinitionsWithOptionalChildren(); len(resources) > 0 && !startupScopes.GetScaleChildren() {
+		slog.Warn("children of these workload definitions are only scaled when downscaler/scale-children is set "+
+			"on the workload or namespace; mark children always: true if parking depends on them",
+			"resources", resources)
+	}
+
 	slog.Debug("getting client for kubernetes")
 
 	client, err := kubernetes.NewClient(config.Kubeconfig, config.DryRun, config.Qps, config.Burst, config.Timeout)
@@ -542,6 +549,21 @@ func scanWorkload(
 		return err
 	}
 
+	return scaleChildren(client, ctx, decision, workload, scopes, workloadNamespaceMetrics, config, logger)
+}
+
+// scaleChildren scales the workload's children with it: all of them when scale-children
+// is on, otherwise only the ones its definition marks always.
+func scaleChildren(
+	client kubernetes.Client,
+	ctx context.Context,
+	decision values.ScalingDecision,
+	workload scalable.Workload,
+	scopes values.Scopes,
+	workloadNamespaceMetrics *metrics.NamespaceMetricsHolder,
+	config *runtimeConfiguration,
+	logger *slog.Logger,
+) error {
 	if scopes.GetScaleChildren() {
 		childrenWorkloads, err := client.GetChildrenWorkloads(workload, ctx)
 		if err != nil {
@@ -550,6 +572,18 @@ func scanWorkload(
 
 		logger.Debug("scaling children workloads", "childrenCount", len(childrenWorkloads))
 		scaleWorkloads(decision, childrenWorkloads, scopes, workloadNamespaceMetrics, client, ctx, config)
+
+		return nil
+	}
+
+	requiredChildren, err := client.GetRequiredChildrenWorkloads(workload, ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get required children workloads: %w", err)
+	}
+
+	if len(requiredChildren) > 0 {
+		logger.Debug("scaling required children workloads", "childrenCount", len(requiredChildren))
+		scaleWorkloads(decision, requiredChildren, scopes, workloadNamespaceMetrics, client, ctx, config)
 	}
 
 	return nil

@@ -42,7 +42,7 @@ func suspendResource(t *testing.T, def *definitions.Definition, obj *unstructure
 func TestDefinedReplicaResource_GetReplicas(t *testing.T) {
 	t.Parallel()
 
-	def := chartDefaultDefinitions(t)["mongodbcommunities"]
+	def := exampleDefinitions(t)["mongodbcommunities"]
 
 	tests := []struct {
 		name    string
@@ -80,7 +80,7 @@ func TestDefinedReplicaResource_GetReplicas(t *testing.T) {
 func TestDefinedReplicaResource_SetReplicas(t *testing.T) {
 	t.Parallel()
 
-	defs := chartDefaultDefinitions(t)
+	defs := exampleDefinitions(t)
 	lastGood := map[string]any{"mongodb.com/v1.lastSuccessfulConfiguration": "{}"}
 
 	tests := []struct {
@@ -190,7 +190,7 @@ func TestDefinedReplicaResource_SetReplicas(t *testing.T) {
 func TestDefinedSuspendResource_Annotation(t *testing.T) {
 	t.Parallel()
 
-	def := chartDefaultDefinitions(t)["cnpgclusters"]
+	def := exampleDefinitions(t)["cnpgclusters"]
 	obj := newFixture("postgresql.cnpg.io/v1", "Cluster", map[string]any{"other": "kept"}, map[string]any{})
 	resource := suspendResource(t, def, obj)
 
@@ -263,7 +263,7 @@ func TestDefinedSuspendResource_Path(t *testing.T) {
 func TestDefinedWorkload_SavedResources(t *testing.T) {
 	t.Parallel()
 
-	defs := chartDefaultDefinitions(t)
+	defs := exampleDefinitions(t)
 
 	rabbit := replicaResource(t, defs["rabbitmqclusters"], newFixture("rabbitmq.com/v1beta1", "RabbitmqCluster", nil,
 		map[string]any{"replicas": int64(3), "resources": requests("500m", "1Gi")}))
@@ -294,7 +294,7 @@ func TestDefinedWorkload_SavedResources(t *testing.T) {
 func TestDefinedWorkload_CopyAndCompare(t *testing.T) {
 	t.Parallel()
 
-	defs := chartDefaultDefinitions(t)
+	defs := exampleDefinitions(t)
 	obj := newFixture("rabbitmq.com/v1beta1", "RabbitmqCluster", nil, map[string]any{"replicas": int64(3)})
 	workload := newDefinedWorkload(obj, defs["rabbitmqclusters"])
 
@@ -323,7 +323,7 @@ func TestDefinedWorkload_CopyAndCompare(t *testing.T) {
 func TestDefinedResource_GetChildren(t *testing.T) {
 	t.Parallel()
 
-	defs := chartDefaultDefinitions(t)
+	defs := exampleDefinitions(t)
 
 	controller := true
 	ownedBy := func(apiVersion, kind, name string) []metav1.OwnerReference {
@@ -366,18 +366,24 @@ func TestDefinedResource_GetChildren(t *testing.T) {
 		def  *definitions.Definition
 		obj  *unstructured.Unstructured
 		want []string
+		// wantRequired are the children scaled even with scale-children off.
+		wantRequired []string
 	}{
 		{
 			name: "owner reference matches group, kind and name",
 			def:  defs["mongodbcommunities"],
 			obj:  newFixture("mongodbcommunity.mongodb.com/v1", "MongoDBCommunity", nil, map[string]any{}),
 			want: []string{"mongo-owned"},
+			// The operator stops reconciling at members 0, so the StatefulSet is always scaled.
+			wantRequired: []string{"mongo-owned"},
 		},
 		{
 			name: "label equals name",
 			def:  defs["elasticsearches"],
 			obj:  newFixture("elasticsearch.k8s.elastic.co/v1", "Elasticsearch", nil, map[string]any{}),
 			want: []string{"es-labeled"},
+			// Pausing orchestration leaves the pods running, so the StatefulSet is always scaled.
+			wantRequired: []string{"es-labeled"},
 		},
 		{
 			name: "deployment children",
@@ -396,8 +402,8 @@ func TestDefinedResource_GetChildren(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			parent, ok := newDefinedWorkload(test.obj, test.def).(ParentWorkload)
-			require.True(t, ok)
+			parent, isParent := newDefinedWorkload(test.obj, test.def).(ParentWorkload)
+			require.True(t, isParent)
 
 			children, err := parent.GetChildren(context.Background(), clientsets)
 			require.NoError(t, err)
@@ -409,6 +415,19 @@ func TestDefinedResource_GetChildren(t *testing.T) {
 			}
 
 			assert.ElementsMatch(t, test.want, names)
+
+			required, hasRequired := newDefinedWorkload(test.obj, test.def).(RequiredChildrenWorkload)
+			require.True(t, hasRequired)
+
+			requiredChildren, err := required.GetRequiredChildren(context.Background(), clientsets)
+			require.NoError(t, err)
+
+			requiredNames := make([]string, 0, len(requiredChildren))
+			for _, child := range requiredChildren {
+				requiredNames = append(requiredNames, child.GetName())
+			}
+
+			assert.ElementsMatch(t, test.wantRequired, requiredNames, "only children marked always")
 		})
 	}
 }
@@ -416,7 +435,7 @@ func TestDefinedResource_GetChildren(t *testing.T) {
 func TestDefinedWorkload_ParseFromBytes(t *testing.T) {
 	t.Parallel()
 
-	def := chartDefaultDefinitions(t)["redissentinels"]
+	def := exampleDefinitions(t)["redissentinels"]
 
 	workload, err := parseDefinedWorkloadFromBytes(def,
 		[]byte(`{"apiVersion":"redis.redis.opstreelabs.in/v1beta2","kind":"RedisSentinel",`+
@@ -436,15 +455,26 @@ func TestDefinitionRegistry(t *testing.T) {
 
 	t.Cleanup(func() { registeredDefinitions.Store(previous) })
 
-	defs := chartDefaultDefinitions(t)
+	defs := exampleDefinitions(t)
 	list := make([]definitions.Definition, 0, len(defs))
+	included := []string{"statefulsets"}
 
 	for _, def := range defs {
 		list = append(list, *def)
+
+		if def.Resource != "mongodbcommunities" {
+			included = append(included, def.Resource)
+		}
 	}
 
-	require.Error(t, RegisterDefinitions([]definitions.Definition{{Resource: "deployments"}}), "built-in names cannot be shadowed")
-	require.NoError(t, RegisterDefinitions(list))
+	require.Error(t, RegisterDefinitions([]definitions.Definition{{Resource: "deployments"}}, nil), "built-in names cannot be shadowed")
+	require.ErrorIs(t, RegisterDefinitions([]definitions.Definition{
+		{Resource: "mydeployments", Group: "apps", Version: "v1", Kind: "Deployment"},
+	}, nil), definitions.ErrInvalidDefinition, "built-in group/kinds cannot be taken over")
+	require.ErrorIs(t, RegisterDefinitions([]definitions.Definition{
+		{Resource: "mykruisesets", Group: "apps.kruise.io", Version: "v1beta1", Kind: "StatefulSet"},
+	}, nil), definitions.ErrInvalidDefinition, "the kind name alone is not enough, the group must match too")
+	require.NoError(t, RegisterDefinitions(list, included))
 
 	assert.True(t, IsSupportedResource("deployments"))
 	assert.True(t, IsSupportedResource(ScaledObjectsResource), "GetScaledObjects looks ScaledObjects up by this name")
@@ -461,7 +491,12 @@ func TestDefinitionRegistry(t *testing.T) {
 
 	assert.True(t, isManagedByOwnerReference(owned("postgresql.cnpg.io/v1", "Cluster")), "a CNPG Cluster owns its workloads")
 	assert.False(t, isManagedByOwnerReference(owned("example.com/v1", "Cluster")), "another operator's Cluster kind is not excluded")
-	assert.True(t, isManagedByOwnerReference(owned("mongodbcommunity.mongodb.com/v1", "MongoDBCommunity")))
+	assert.False(t, isManagedByOwnerReference(owned("mongodbcommunity.mongodb.com/v1", "MongoDBCommunity")),
+		"a defined owner that isn't included leaves its StatefulSets to the statefulsets scaler")
+
+	require.NoError(t, RegisterDefinitions(list, append(included, "MongoDBCommunities")))
+	assert.True(t, isManagedByOwnerReference(owned("mongodbcommunity.mongodb.com/v1", "MongoDBCommunity")),
+		"an included defined owner scales its StatefulSets itself")
 
 	workload, err := ParseWorkloadFromRawObject("postgresql.cnpg.io", "Cluster", "cluster",
 		[]byte(`{"apiVersion":"postgresql.cnpg.io/v1","kind":"Cluster","metadata":{"name":"pg","namespace":"default"}}`))

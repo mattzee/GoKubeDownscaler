@@ -196,11 +196,14 @@ Enable a data engine by including only its CR type.
 Some operators do not scale their own workloads down.
 Elasticsearch's `pause-orchestration` stops reconciliation without stopping pods.
 The MongoDBCommunity operator short-circuits once `members` is 0.
-For those the CR scaler also scales the child StatefulSets itself, gated by [downscaler/scale-children](ref:docs-values#scale-children).
+For those the CR scaler also scales the child StatefulSets itself.
+The example definitions mark them `always: true`,
+so they are scaled whether or not [downscaler/scale-children](ref:docs-values#scale-children) is set.
 
 The RabbitMQ, CNPG, Elasticsearch, MongoDB and Redis kinds are not compiled in.
-They are [workload definitions](#workload-definitions) shipped as chart defaults, so they can be changed,
-removed or joined by other operators through Helm values alone.
+They are [workload definitions](#workload-definitions).
+The chart ships none by default; ready-made ones are in
+`examples/operator-workload-definitions.yaml` in the chart, and can be changed or joined by other operators through Helm values alone.
 
 ### Postgresqls
 
@@ -352,20 +355,22 @@ Scales by setting the node selector to match none of the nodes, which stops pods
 ## Workload Definitions
 
 Operator custom resources that are scaled by one value can be described in configuration instead of code.
-The chart's `workloadDefinitions` value is rendered into a ConfigMap, mounted into the downscaler and the webhook,
+The chart's `workloadDefinitions` value (empty by default) is rendered into a ConfigMap, mounted into the downscaler and the webhook,
 and loaded at startup from [`--workload-definitions-file`](ref:docs-runtime-configuration#workload-definitions-file)
 (default `/etc/downscaler/workload-definitions.yaml`).
 The same value generates the RBAC rules, webhook rules and admission-policy rules, so they cannot drift apart.
 Changing a definition rolls the pods through a checksum annotation.
 
 A definition is only used for resources listed in [`--include-resources`](ref:docs-runtime-configuration#include-resources).
+The ConfigMap, mount, flag and checksum are only rendered when at least one included resource has a definition,
+so installs that don't use definitions are unchanged.
 An invalid definition, or an included resource that is neither built in nor defined, stops the downscaler at startup
 so a bad values change fails the rollout instead of silently skipping workloads.
 
 ### Schema
 
 Each key of `workloadDefinitions` is the resource name used in `--include-resources`.
-It must be lowercase and must not be a built-in resource.
+It must be lowercase and must not be a built-in resource, and its group and kind must not be one a built-in resource already handles.
 
 | Field                                              | Required                      | Description                                                                                                                                                                                                                                |
 | -------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -379,13 +384,15 @@ It must be lowercase and must not be a built-in resource.
 | `children[].kind`                                  | no                            | `StatefulSet` or `Deployment` workloads scaled to 0 with the parent when [downscaler/scale-children](ref:docs-values#scale-children) is enabled.                                                                                           |
 | `children[].match`                                 | with `children`               | `ownerReference` (an owner reference to the parent's group, kind and name) or `labelEqualsName` (the `label` equals the parent's name).                                                                                                    |
 | `children[].label`                                 | with `labelEqualsName`        | The label key to match.                                                                                                                                                                                                                    |
+| `children[].always`                                | no                            | Scale this child with the parent even when scale-children is off. Set it when parking the parent alone leaves the pods running.                                                                                                            |
 | `savings.requestsPath` or `savings.containersPath` | no                            | Where one pod's resource requests live, for the saved-resources metric: a requests map, or a container list whose requests are summed. Without `savings` the metric reports 0 for the kind.                                                |
 | `savings.countPath`, `savings.groupsPath`          | no                            | Suspend-shaped only. `countPath` is the number of pods (default 1). With `groupsPath`, the other paths are relative to each item of that list and the results are summed. Replica-shaped kinds multiply by the change in replicas instead. |
 
 ### Example
 
-The chart ships the RabbitMQ, CNPG, Elasticsearch, MongoDB and Redis kinds as defaults; see `workloadDefinitions` in the chart's
-`values.yaml` for all of them.
+Definitions for the RabbitMQ, CNPG, Elasticsearch, MongoDB and Redis kinds are in the chart's
+`examples/operator-workload-definitions.yaml`.
+Pass it with `-f` (or copy the entries you need) and add the resources to `includedResources`.
 Two of them show the shapes:
 
 ```yaml

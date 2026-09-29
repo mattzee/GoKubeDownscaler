@@ -70,6 +70,9 @@ type Child struct {
 	Kind  string `json:"kind"`
 	Match string `json:"match"`
 	Label string `json:"label,omitempty"`
+	// Always scales the child with the parent even when scale-children is off. Set it
+	// for children that actually stop the pods, where parking the parent alone does not.
+	Always bool `json:"always,omitempty"`
 }
 
 // Savings describes where pod resource requests live. All paths are dot-separated.

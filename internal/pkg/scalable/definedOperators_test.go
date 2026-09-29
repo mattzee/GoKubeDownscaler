@@ -224,11 +224,11 @@ func operatorCases() []operatorCase {
 }
 
 // TestDefinedOperators runs a park, a repeated park and a wake for every operator
-// shipped in the chart's default workloadDefinitions.
+// shipped in the chart's example workloadDefinitions.
 func TestDefinedOperators(t *testing.T) {
 	t.Parallel()
 
-	defs := chartDefaultDefinitions(t)
+	defs := exampleDefinitions(t)
 	clientsets := operatorChildrenClient()
 
 	for _, test := range operatorCases() {

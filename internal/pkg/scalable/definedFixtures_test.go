@@ -14,12 +14,12 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// chartDefaultDefinitions loads the workloadDefinitions shipped as chart defaults,
-// so tests exercise exactly what a default install runs.
-func chartDefaultDefinitions(t *testing.T) map[string]*definitions.Definition {
+// exampleDefinitions loads the chart's example operator definitions, so tests
+// exercise exactly what an install using that file runs.
+func exampleDefinitions(t *testing.T) map[string]*definitions.Definition {
 	t.Helper()
 
-	data, err := os.ReadFile(filepath.Join("..", "..", "..", "deployments", "chart", "values.yaml"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "deployments", "chart", "examples", "operator-workload-definitions.yaml"))
 	require.NoError(t, err)
 
 	var chartValues struct {
