@@ -1,8 +1,11 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ .Values.configMap.name }}
+  name: {{ include "go-kube-downscaler.configMapName" . }}
   namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "go-kube-downscaler.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
 data:
   EXCLUDE_NAMESPACES: '{{ join "," (coalesce .Values.excludedNamespaces (list .Release.Namespace "kube-system")) }}'
   {{- if .Values.configMap.extraConfig }}

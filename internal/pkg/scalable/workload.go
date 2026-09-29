@@ -20,12 +20,15 @@ import (
 	gatewayapi "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned"
 )
 
+// ScaledObjectsResource is the resource name of KEDA ScaledObjects.
+const ScaledObjectsResource = "scaledobjects"
+
 // getResourceFunc is a function that gets a specific resource as a Workload.
 type getResourceFunc func(namespace string, clientsets *Clientsets, ctx context.Context) ([]Workload, error)
 
-// GetWorkloads gets all workloads of the given resource in the cluster.
-func GetWorkloads(resource, namespace string, clientsets *Clientsets, ctx context.Context) ([]Workload, error) {
-	resourceFuncMap := map[string]getResourceFunc{
+// builtinResourceFuncs maps every built-in resource name to its getResourceFunc.
+func builtinResourceFuncs() map[string]getResourceFunc {
+	return map[string]getResourceFunc{
 		"deployments":              getDeployments,
 		"statefulsets":             getStatefulSets,
 		"cronjobs":                 getCronJobs,
@@ -33,7 +36,7 @@ func GetWorkloads(resource, namespace string, clientsets *Clientsets, ctx contex
 		"daemonsets":               getDaemonSets,
 		"poddisruptionbudgets":     getPodDisruptionBudgets,
 		"horizontalpodautoscalers": getHorizontalPodAutoscalers,
-		"scaledobjects":            getScaledObjects,
+		ScaledObjectsResource:      getScaledObjects,
 		"rollouts":                 getRollouts,
 		"stacks":                   getStacks,
 		"prometheuses":             getPrometheuses,
@@ -55,10 +58,21 @@ func GetWorkloads(resource, namespace string, clientsets *Clientsets, ctx contex
 		"imagepulljobs":            getImagePullJobs,
 		"clonesets":                getCloneSets,
 	}
+}
 
-	resourceFunc, exists := resourceFuncMap[resource]
+// GetWorkloads gets all workloads of the given resource in the cluster.
+// Resources that are not built in are looked up in the registered workload definitions.
+func GetWorkloads(resource, namespace string, clientsets *Clientsets, ctx context.Context) ([]Workload, error) {
+	resourceFunc, exists := builtinResourceFuncs()[resource]
 	if !exists {
-		return nil, newInvalidResourceError(resource)
+		def := definitionByResource(resource)
+		if def == nil {
+			return nil, newInvalidResourceError(resource)
+		}
+
+		resourceFunc = func(namespace string, clientsets *Clientsets, ctx context.Context) ([]Workload, error) {
+			return getDefinedWorkloads(def, namespace, clientsets, ctx)
+		}
 	}
 
 	workloads, err := resourceFunc(namespace, clientsets, ctx)
@@ -73,9 +87,21 @@ func GetWorkloads(resource, namespace string, clientsets *Clientsets, ctx contex
 type parseWorkloadFunc func(rawObject []byte) (Workload, error)
 
 // ParseWorkloadFromRawObject parse the admission review and returns the workloads.
+// group and kind come from the admission request; a registered workload
+// definition for that group and kind takes precedence over the built-in parsers,
+// which are keyed by the lowercased kind in resource.
 //
 //nolint:ireturn // this function should return an interface type
-func ParseWorkloadFromRawObject(resource string, rawObject []byte) (Workload, error) {
+func ParseWorkloadFromRawObject(group, kind, resource string, rawObject []byte) (Workload, error) {
+	if def := definitionByGroupKind(group, kind); def != nil {
+		workload, err := parseDefinedWorkloadFromBytes(def, rawObject)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse workloads of type %q: %w from admission request", def.Resource, err)
+		}
+
+		return workload, nil
+	}
+
 	parseWorkloadFuncMap := map[string]parseWorkloadFunc{
 		"deployment":              parseDeploymentFromBytes,
 		"statefulset":             parseStatefulSetFromBytes,
@@ -121,6 +147,12 @@ func ParseWorkloadFromRawObject(resource string, rawObject []byte) (Workload, er
 
 type ParentWorkload interface {
 	GetChildren(ctx context.Context, clientsets *Clientsets) ([]Workload, error)
+}
+
+// RequiredChildrenWorkload is a workload with children that are scaled with it even
+// when scale-children is off, because scaling the parent alone leaves the pods running.
+type RequiredChildrenWorkload interface {
+	GetRequiredChildren(ctx context.Context, clientsets *Clientsets) ([]Workload, error)
 }
 
 type PercentageWorkload interface {

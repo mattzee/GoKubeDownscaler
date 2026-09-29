@@ -54,10 +54,71 @@ Common labels
 {{- define "go-kube-downscaler.labels" -}}
 helm.sh/chart: {{ include "go-kube-downscaler.chart" . }}
 {{ include "go-kube-downscaler.selectorLabels" . }}
+{{ include "go-kube-downscaler.standardLabels" . }}
+{{- with .Values.commonLabels }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{/*
+Recommended labels (https://kubernetes.io/docs/concepts/overview/working-with-objects/common-labels/).
+They are not part of the selectors: those stay on `application` so upgrades keep the immutable
+Deployment selector.
+*/}}
+{{- define "go-kube-downscaler.standardLabels" -}}
+app.kubernetes.io/name: {{ include "go-kube-downscaler.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
+app.kubernetes.io/part-of: go-kube-downscaler
 app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{/*
+Chart name, overridable with nameOverride.
+*/}}
+{{- define "go-kube-downscaler.name" -}}
+{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
+Name of the controller's ConfigMap.
+*/}}
+{{- define "go-kube-downscaler.configMapName" -}}
+{{- default (include "go-kube-downscaler.fullname" .) .Values.configMap.name }}
+{{- end }}
+
+{{/*
+Controller image reference; a digest wins over the tag.
+*/}}
+{{- define "go-kube-downscaler.image" -}}
+{{- if .Values.image.digest -}}
+{{ .Values.image.repository }}@{{ .Values.image.digest }}
+{{- else -}}
+{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
+{{- end -}}
+{{- end }}
+
+{{/*
+Name of the metrics Service, which is also the Prometheus job name under a ServiceMonitor.
+*/}}
+{{- define "go-kube-downscaler.metricsServiceName" -}}
+{{- printf "%s-metrics" (include "go-kube-downscaler.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
+Probe block: probe name, path, and the probe's values.
+*/}}
+{{- define "go-kube-downscaler.probe" -}}
+httpGet:
+  path: {{ .path }}
+  port: http
+initialDelaySeconds: {{ .probe.initialDelaySeconds }}
+periodSeconds: {{ .probe.periodSeconds }}
+timeoutSeconds: {{ .probe.timeoutSeconds }}
+failureThreshold: {{ .probe.failureThreshold }}
+successThreshold: {{ .probe.successThreshold }}
 {{- end }}
 
 {{/*
@@ -465,6 +526,7 @@ Create defined permissions for roles
     - update
 {{- end }}
 {{- end }}
+{{- include "go-kube-downscaler.workloadDefinitionPermissions" . }}
 {{- end }}
 
 {{/*
@@ -769,6 +831,7 @@ Create webhook resources
     - advanceddaemonsets
 {{ end -}}
 {{ end -}}
+{{- include "go-kube-downscaler.workloadDefinitionRules" (dict "Values" .Values "createUpdate" true) }}
 {{- end }}
 
 
@@ -1119,6 +1182,7 @@ resources include in annotationsCompliance
     - "UPDATE"
 {{- end }}
 {{ end -}}
+{{- include "go-kube-downscaler.workloadDefinitionRules" (dict "Values" .Values "createUpdate" $createUpdate) }}
 {{- end }}
 
 {{/*
@@ -1147,4 +1211,117 @@ Validate annotationsCompliance combinations that JSON Schema cannot express.
     {{- $_ := mustRegexMatch $regex "" -}}
   {{- end -}}
 {{- end -}}
+{{- end }}
+
+{{/*
+Name of the ConfigMap holding the workload definitions.
+*/}}
+{{- define "go-kube-downscaler.workloadDefinitionsConfigMapName" -}}
+{{- printf "%s-workload-definitions" (include "go-kube-downscaler.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
+"true" when an includedResources entry has a workload definition. Everything that
+wires definitions into the pods is gated on it, so installs that don't use
+definitions render exactly as before.
+*/}}
+{{- define "go-kube-downscaler.hasIncludedDefinitions" -}}
+{{- $definitions := .Values.workloadDefinitions | default dict }}
+{{- range $resource := .Values.includedResources }}
+{{- if index $definitions $resource }}true{{ end }}
+{{- end }}
+{{- end }}
+
+{{/*
+All workload definitions as the list the downscaler loads, each with its key as
+resource. Entries set to null are dropped, so a default can be removed.
+*/}}
+{{- define "go-kube-downscaler.workloadDefinitionsList" -}}
+{{- $list := list }}
+{{- range $resource, $definition := .Values.workloadDefinitions | default dict }}
+{{- if $definition }}
+{{- $list = append $list (merge (dict "resource" $resource) $definition) }}
+{{- end }}
+{{- end }}
+{{- toYaml $list }}
+{{- end }}
+
+{{/*
+RBAC rules for the included workload definitions, plus the apps workloads any of
+them scale as children.
+*/}}
+{{- define "go-kube-downscaler.workloadDefinitionPermissions" -}}
+{{- $definitions := .Values.workloadDefinitions | default dict }}
+{{- $children := dict }}
+{{- range $resource := .Values.includedResources }}
+{{- with index $definitions $resource }}
+- apiGroups:
+    - {{ .group }}
+  resources:
+    - {{ .plural | default $resource }}
+  verbs:
+    - get
+    - list
+    - update
+{{- range .children }}
+{{- $_ := set $children (printf "%ss" (lower .kind)) true }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- range $plural, $_ := $children }}
+- apiGroups:
+    - apps
+  resources:
+    - {{ $plural }}
+  verbs:
+    - get
+    - list
+    - update
+{{- end }}
+{{- end }}
+
+{{/*
+Admission rules for the included workload definitions. createUpdate adds CREATE.
+*/}}
+{{- define "go-kube-downscaler.workloadDefinitionRules" -}}
+{{- $definitions := .Values.workloadDefinitions | default dict }}
+{{- $createUpdate := .createUpdate }}
+{{- range $resource := .Values.includedResources }}
+{{- with index $definitions $resource }}
+- apiGroups:
+    - {{ .group | quote }}
+  apiVersions:
+    - "*"
+  operations:
+  {{- if $createUpdate }}
+    - "CREATE"
+  {{- end }}
+    - "UPDATE"
+  resources:
+    - {{ .plural | default $resource }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+Built-in resource names, as the downscaler's --include-resources accepts them.
+TestChartBuiltinResources keeps this list in step with the code.
+*/}}
+{{- define "go-kube-downscaler.builtinResources" -}}
+advancedcronjobs advanceddaemonsets advancedstatefulsets autoscalingrunnersets awselbservices awsnlbservices broadcastjobs clonesets cronjobs daemonsets deployments gateways horizontalpodautoscalers imagepulljobs ingresses jobs kafkabridges kafkaconnects kafkamirrormaker2s kruisestatefulsets poddisruptionbudgets postgresqls prometheuses rollouts scaledobjects services stacks statefulsets
+{{- end }}
+
+{{/*
+Fail the render when an includedResources entry is neither built in nor a
+workloadDefinitions key: a typo, or a default dropped with null while still
+included. Without this the downscaler would refuse to start after the install.
+*/}}
+{{- define "go-kube-downscaler.includedResources.validate" -}}
+{{- $builtins := splitList " " (include "go-kube-downscaler.builtinResources" .) }}
+{{- $definitions := .Values.workloadDefinitions | default dict }}
+{{- range $resource := .Values.includedResources }}
+{{- if not (or (has $resource $builtins) (index $definitions $resource)) }}
+{{- fail (printf "includedResources entry %q is neither a built-in resource nor defined in workloadDefinitions" $resource) }}
+{{- end }}
+{{- end }}
 {{- end }}

@@ -78,7 +78,12 @@ func (v *WorkloadMutationHandler) HandleWorkloadMutation(ctx context.Context, wr
 		return
 	}
 
-	workload, err := scalable.ParseWorkloadFromRawObject(strings.ToLower(input.Request.Kind.Kind), input.Request.Object.Raw)
+	workload, err := scalable.ParseWorkloadFromRawObject(
+		input.Request.Kind.Group,
+		input.Request.Kind.Kind,
+		strings.ToLower(input.Request.Kind.Kind),
+		input.Request.Object.Raw,
+	)
 	if err != nil {
 		slog.Error("error encountered while parsing the workload", "error", err)
 
@@ -428,7 +433,7 @@ func (v *WorkloadMutationHandler) evaluateWorkloadExternalScalingCondition(
 	review admissionv1.AdmissionReview,
 	logger *slog.Logger,
 ) (*admissionv1.AdmissionReview, error) {
-	if _, ok := v.includeResourcesSet["scaledobjects"]; !ok {
+	if _, ok := v.includeResourcesSet[scalable.ScaledObjectsResource]; !ok {
 		return nil, ErrNoExternalScaling
 	}
 

@@ -1,6 +1,8 @@
 package metrics
 
 import (
+	"time"
+
 	"github.com/prometheus/client_golang/prometheus"
 	k8smetrics "k8s.io/component-base/metrics"
 	"k8s.io/component-base/metrics/legacyregistry"
@@ -25,6 +27,9 @@ type Metrics struct {
 	savedCPUGauge                  *k8smetrics.GaugeVec
 	downscalerCycleDurationSeconds *k8smetrics.Gauge
 	downscalerExecutionsTotal      *k8smetrics.Counter
+	lastSuccessfulCycleTimestamp   *k8smetrics.Gauge
+	scanningGauge                  *k8smetrics.Gauge
+	workloadScanErrorsTotal        *k8smetrics.CounterVec
 }
 
 func NewMetrics(dryRun bool) *Metrics {
@@ -79,6 +84,24 @@ func NewMetrics(dryRun bool) *Metrics {
 				Help: "Number of cycles completed by kubedownscaler since being instantiated.",
 			},
 		),
+		lastSuccessfulCycleTimestamp: k8smetrics.NewGauge(
+			&k8smetrics.GaugeOpts{
+				Name: "kubedownscaler_last_successful_cycle_timestamp_seconds",
+				Help: "Unix time the last kubedownscaler cycle completed.",
+			},
+		),
+		scanningGauge: k8smetrics.NewGauge(
+			&k8smetrics.GaugeOpts{
+				Name: "kubedownscaler_scanning",
+				Help: "1 while this instance runs the scan loop (the leader, or leader election is off), else 0.",
+			},
+		),
+		workloadScanErrorsTotal: k8smetrics.NewCounterVec(
+			&k8smetrics.CounterOpts{
+				Name: "kubedownscaler_workload_scan_errors_total",
+				Help: "Number of workload scans that failed, broken down by workload kind.",
+			}, []string{"kind"},
+		),
 	}
 }
 
@@ -91,6 +114,33 @@ func (m *Metrics) RegisterAll() {
 	legacyregistry.MustRegister(m.scalingErrorWorkloadGauge)
 	legacyregistry.MustRegister(m.downscalerCycleDurationSeconds)
 	legacyregistry.MustRegister(m.downscalerExecutionsTotal)
+	legacyregistry.MustRegister(m.lastSuccessfulCycleTimestamp)
+	legacyregistry.MustRegister(m.scanningGauge)
+	legacyregistry.MustRegister(m.workloadScanErrorsTotal)
+}
+
+// SetScanning records whether this instance runs the scan loop. Safe on a nil Metrics.
+func (m *Metrics) SetScanning(scanning bool) {
+	if m == nil {
+		return
+	}
+
+	if scanning {
+		m.scanningGauge.Set(1)
+
+		return
+	}
+
+	m.scanningGauge.Set(0)
+}
+
+// IncrementWorkloadScanErrors counts a failed workload scan for the given kind. Safe on a nil Metrics.
+func (m *Metrics) IncrementWorkloadScanErrors(kind string) {
+	if m == nil {
+		return
+	}
+
+	m.workloadScanErrorsTotal.WithLabelValues(kind).Inc()
 }
 
 func (m *Metrics) UpdateMetrics(
@@ -134,4 +184,5 @@ func (m *Metrics) UpdateMetrics(
 
 	m.downscalerCycleDurationSeconds.Set(cycleDuration)
 	m.downscalerExecutionsTotal.Inc()
+	m.lastSuccessfulCycleTimestamp.Set(float64(time.Now().Unix()))
 }

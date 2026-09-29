@@ -1,0 +1,69 @@
+name: Lint helm chart
+
+on:
+  pull_request:
+    paths:
+      - deployments/chart/**
+      - .github/workflows/chart_lint.yaml
+  push:
+    branches: [main]
+    paths:
+      - deployments/chart/**
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      CHART: deployments/chart
+    steps:
+      - uses: actions/checkout@v7
+
+      # A pinned Helm rather than whatever the runner image ships.
+      - name: Install Helm
+        env:
+          HELM_VERSION: v3.19.0
+          HELM_SHA256: a7f81ce08007091b86d8bd696eb4d86b8d0f2e1b9f6c714be62f82f96a594496
+        run: |
+          curl -sSfLO "https://get.helm.sh/helm-$HELM_VERSION-linux-amd64.tar.gz"
+          echo "$HELM_SHA256  helm-$HELM_VERSION-linux-amd64.tar.gz" | sha256sum -c -
+          tar xzf "helm-$HELM_VERSION-linux-amd64.tar.gz" linux-amd64/helm
+          sudo install linux-amd64/helm /usr/local/bin/helm
+          rm -rf "helm-$HELM_VERSION-linux-amd64.tar.gz" linux-amd64
+          helm version --short
+
+      - name: helm lint
+        run: |
+          helm lint --strict "$CHART"
+          helm lint --strict "$CHART" --values "$CHART/ci/all-features-values.yaml"
+
+      - name: helm-unittest
+        run: |
+          # Helm 4 verifies plugins by default and helm-unittest is not signed.
+          verify=""
+          case "$(helm version --short)" in v4.*) verify="--verify=false" ;; esac
+          helm plugin install https://github.com/helm-unittest/helm-unittest --version v1.0.3 $verify
+          helm unittest "$CHART"
+
+      - name: kube-linter
+        uses: stackrox/kube-linter-action@v1
+        with:
+          directory: deployments/chart
+          config: deployments/chart/.kube-linter.yaml
+
+      - name: kubeconform
+        run: |
+          curl -sSfL https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz | tar xz kubeconform
+          for values in "$CHART/values.yaml" "$CHART/ci/all-features-values.yaml"; do
+            helm template gkd "$CHART" --namespace downscaler --values "$values" |
+              ./kubeconform -strict -summary \
+                -schema-location default \
+                -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+          done
+
+      - name: README is up to date
+        run: |
+          npx --yes @bitnami/readme-generator-for-helm@2.7.2 --values "$CHART/values.yaml" --readme "$CHART/README.md"
+          git diff --exit-code -- "$CHART/README.md" ||
+            { echo "::error::Regenerate deployments/chart/README.md from values.yaml (see the Parameters section)"; exit 1; }

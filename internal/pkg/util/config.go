@@ -36,7 +36,12 @@ type CommonRuntimeConfiguration struct {
 	Timeout int
 	// Kubeconfig sets an optional kubeconfig to use for testing purposes instead of the in-cluster config.
 	Kubeconfig string
+	// WorkloadDefinitionsFile sets the file operator workload definitions are loaded from.
+	WorkloadDefinitionsFile string
 }
+
+// DefaultWorkloadDefinitionsFile is where the chart mounts the workload definitions.
+const DefaultWorkloadDefinitionsFile = "/etc/downscaler/workload-definitions.yaml"
 
 func GetDefaultConfig() *CommonRuntimeConfiguration {
 	return &CommonRuntimeConfiguration{
@@ -51,6 +56,8 @@ func GetDefaultConfig() *CommonRuntimeConfiguration {
 		Kubeconfig:        "",
 		MetricsEnabled:    false,
 		JsonLogs:          false,
+
+		WorkloadDefinitionsFile: DefaultWorkloadDefinitionsFile,
 	}
 }
 
@@ -133,6 +140,12 @@ func (c *CommonRuntimeConfiguration) ParseCommonFlags() {
 		"k",
 		"",
 		"kubeconfig to use instead of the in-cluster config (optional)",
+	)
+	flag.StringVar(
+		&c.WorkloadDefinitionsFile,
+		"workload-definitions-file",
+		DefaultWorkloadDefinitionsFile,
+		"file with operator workload definitions; a missing file means built-in resources only (default: "+DefaultWorkloadDefinitionsFile+")",
 	)
 }
 

@@ -144,8 +144,10 @@ func (c *cronJob) getSuspend() (currentValue, targetDownscaleState values.Replic
 }
 
 // setSuspend sets the value of the suspend field on the cronJob.
-func (c *cronJob) setSuspend(suspend bool) {
+func (c *cronJob) setSuspend(suspend bool) error {
 	c.Spec.Suspend = &suspend
+
+	return nil
 }
 
 // Update updates the resource with all changes made to it. It should only be called once on a resource.

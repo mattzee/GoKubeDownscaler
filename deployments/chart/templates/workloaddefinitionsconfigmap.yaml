@@ -1,0 +1,13 @@
+{{- include "go-kube-downscaler.includedResources.validate" . }}
+{{- if include "go-kube-downscaler.hasIncludedDefinitions" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "go-kube-downscaler.workloadDefinitionsConfigMapName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "go-kube-downscaler.labels" . | nindent 4 }}
+data:
+  workload-definitions.yaml: |
+    {{- include "go-kube-downscaler.workloadDefinitionsList" . | nindent 4 }}
+{{- end }}

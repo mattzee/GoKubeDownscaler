@@ -1,0 +1,234 @@
+suite: workload definitions
+release:
+  name: gkd
+  namespace: downscaler
+tests:
+  - it: ships no definitions wiring by default
+    templates: [workloaddefinitionsconfigmap.yaml, deployment.yaml, webhookdeployment.yaml]
+    set:
+      webhookController.enabled: true
+    asserts:
+      - hasDocuments: { count: 0 }
+        template: workloaddefinitionsconfigmap.yaml
+      - notContains:
+          path: 'spec.template.spec.containers[0].args'
+          content: --workload-definitions-file=/etc/downscaler/workload-definitions.yaml
+        template: deployment.yaml
+      - notExists: { path: spec.template.spec.volumes }
+        template: deployment.yaml
+      - notExists: { path: 'spec.template.metadata.annotations["checksum/workload-definitions"]' }
+        template: webhookdeployment.yaml
+      - notContains:
+          path: 'spec.template.spec.containers[0].args'
+          content: --workload-definitions-file=/etc/downscaler/workload-definitions.yaml
+        template: webhookdeployment.yaml
+      - lengthEqual: { path: spec.template.spec.volumes, count: 1 }
+        template: webhookdeployment.yaml
+
+  - it: ships no definitions wiring when definitions are set but none are included
+    templates: [workloaddefinitionsconfigmap.yaml, deployment.yaml]
+    values:
+      - ../examples/operator-workload-definitions.yaml
+    asserts:
+      - hasDocuments: { count: 0 }
+        template: workloaddefinitionsconfigmap.yaml
+      - notExists: { path: spec.template.spec.volumes }
+        template: deployment.yaml
+
+  - it: ships the operator definitions in a ConfigMap keyed by resource
+    template: workloaddefinitionsconfigmap.yaml
+    values:
+      - ../examples/operator-workload-definitions.yaml
+    set:
+      includedResources: [deployments, cnpgclusters]
+    asserts:
+      - equal: { path: metadata.name, value: gkd-go-kube-downscaler-workload-definitions }
+      - matchRegex: { path: 'data["workload-definitions.yaml"]', pattern: '(?m)^- group: postgresql\.cnpg\.io$' }
+      - matchRegex: { path: 'data["workload-definitions.yaml"]', pattern: '(?m)^  resource: redissentinels$' }
+
+  - it: drops an example set to null and adds a user definition
+    template: workloaddefinitionsconfigmap.yaml
+    values:
+      - ../examples/operator-workload-definitions.yaml
+    set:
+      includedResources: [things]
+      workloadDefinitions:
+        cnpgclusters: null
+        things:
+          group: example.com
+          version: v1
+          kind: Thing
+          replicas:
+            path: spec.size
+    asserts:
+      - notMatchRegex: { path: 'data["workload-definitions.yaml"]', pattern: 'cnpgclusters' }
+      - matchRegex: { path: 'data["workload-definitions.yaml"]', pattern: '(?m)^  resource: things$' }
+
+  - it: mounts the definitions into the controller and rolls it when they change
+    template: deployment.yaml
+    values:
+      - ../examples/operator-workload-definitions.yaml
+    set:
+      includedResources: [deployments, rabbitmqclusters]
+    asserts:
+      - contains:
+          path: 'spec.template.spec.containers[0].args'
+          content: --workload-definitions-file=/etc/downscaler/workload-definitions.yaml
+      - contains:
+          path: 'spec.template.spec.containers[0].volumeMounts'
+          content: { name: workload-definitions, mountPath: /etc/downscaler, readOnly: true }
+      - contains:
+          path: spec.template.spec.volumes
+          content: { name: workload-definitions, configMap: { name: gkd-go-kube-downscaler-workload-definitions } }
+      - exists: { path: 'spec.template.metadata.annotations["checksum/workload-definitions"]' }
+
+  - it: keeps the checksum even when config restarts are off
+    template: deployment.yaml
+    values:
+      - ../examples/operator-workload-definitions.yaml
+    set:
+      includedResources: [deployments, rabbitmqclusters]
+      forceRestartOnConfigChange: false
+    asserts:
+      - exists: { path: 'spec.template.metadata.annotations["checksum/workload-definitions"]' }
+      - notExists: { path: 'spec.template.metadata.annotations["checksum/config"]' }
+
+  - it: mounts the definitions into the webhook
+    template: webhookdeployment.yaml
+    values:
+      - ../examples/operator-workload-definitions.yaml
+    set:
+      includedResources: [deployments, rabbitmqclusters]
+      webhookController.enabled: true
+    asserts:
+      - contains:
+          path: 'spec.template.spec.containers[0].args'
+          content: --workload-definitions-file=/etc/downscaler/workload-definitions.yaml
+      - contains:
+          path: 'spec.template.spec.containers[0].volumeMounts'
+          content: { name: workload-definitions, mountPath: /etc/downscaler, readOnly: true }
+      - exists: { path: 'spec.template.metadata.annotations["checksum/workload-definitions"]' }
+
+  - it: grants RBAC only for included definitions, using the CRD plural
+    template: clusterrole.yaml
+    documentIndex: 0
+    values:
+      - ../examples/operator-workload-definitions.yaml
+    set:
+      includedResources: [deployments, cnpgclusters, rabbitmqclusters]
+    asserts:
+      - contains:
+          path: rules
+          content: { apiGroups: [postgresql.cnpg.io], resources: [clusters], verbs: [get, list, update] }
+      - contains:
+          path: rules
+          content: { apiGroups: [rabbitmq.com], resources: [rabbitmqclusters], verbs: [get, list, update] }
+      - notContains:
+          path: rules
+          content: { apiGroups: [elasticsearch.k8s.elastic.co], resources: [elasticsearches], verbs: [get, list, update] }
+      - notContains:
+          path: rules
+          content: { apiGroups: [apps], resources: [statefulsets], verbs: [get, list, update] }
+
+  - it: grants the child StatefulSet RBAC when a definition has children
+    template: clusterrole.yaml
+    documentIndex: 0
+    values:
+      - ../examples/operator-workload-definitions.yaml
+    set:
+      includedResources: [deployments, mongodbcommunities]
+    asserts:
+      - contains:
+          path: rules
+          content: { apiGroups: [mongodbcommunity.mongodb.com], resources: [mongodbcommunity], verbs: [get, list, update] }
+      - contains:
+          path: rules
+          content: { apiGroups: [apps], resources: [statefulsets], verbs: [get, list, update] }
+
+  - it: generates RBAC for a user definition
+    template: clusterrole.yaml
+    documentIndex: 0
+    set:
+      includedResources: [things]
+      workloadDefinitions:
+        things:
+          plural: thingies
+          group: example.com
+          version: v1
+          kind: Thing
+          replicas:
+            path: spec.size
+          children:
+            - kind: Deployment
+              match: ownerReference
+    asserts:
+      - contains:
+          path: rules
+          content: { apiGroups: [example.com], resources: [thingies], verbs: [get, list, update] }
+      - contains:
+          path: rules
+          content: { apiGroups: [apps], resources: [deployments], verbs: [get, list, update] }
+
+  - it: generates webhook rules for included definitions
+    template: mutatingwebhookconfiguration.yaml
+    values:
+      - ../examples/operator-workload-definitions.yaml
+    set:
+      webhookController.enabled: true
+      includedResources: [deployments, cnpgclusters]
+    asserts:
+      - contains:
+          path: 'webhooks[0].rules'
+          content:
+            apiGroups: [postgresql.cnpg.io]
+            apiVersions: ["*"]
+            operations: [CREATE, UPDATE]
+            resources: [clusters]
+      - lengthEqual: { path: 'webhooks[0].rules', count: 2 }
+
+  - it: rejects an invalid definition
+    template: workloaddefinitionsconfigmap.yaml
+    set:
+      workloadDefinitions:
+        things:
+          group: example.com
+          version: v1
+          kind: Thing
+    asserts:
+      - failedTemplate: {}
+
+  - it: rejects an includedResources typo
+    template: workloaddefinitionsconfigmap.yaml
+    set:
+      includedResources: [deploymennts]
+    asserts:
+      - failedTemplate:
+          errorPattern: 'includedResources entry "deploymennts" is neither a built-in resource nor defined in workloadDefinitions'
+
+  - it: rejects an included resource whose example definition was dropped
+    template: workloaddefinitionsconfigmap.yaml
+    values:
+      - ../examples/operator-workload-definitions.yaml
+    set:
+      includedResources: [deployments, cnpgclusters]
+      workloadDefinitions:
+        cnpgclusters: null
+    asserts:
+      - failedTemplate:
+          errorPattern: 'includedResources entry "cnpgclusters" is neither'
+
+  - it: accepts built-in, example and user-defined resources together
+    template: workloaddefinitionsconfigmap.yaml
+    values:
+      - ../examples/operator-workload-definitions.yaml
+    set:
+      includedResources: [deployments, scaledobjects, cnpgclusters, things]
+      workloadDefinitions:
+        things:
+          group: example.com
+          version: v1
+          kind: Thing
+          replicas:
+            path: spec.size
+    asserts:
+      - hasDocuments: { count: 1 }

@@ -20,6 +20,11 @@ type MockClient struct {
 	mock.Mock
 }
 
+// GetRequiredChildrenWorkloads returns no children: the mocked workloads have none.
+func (m *MockClient) GetRequiredChildrenWorkloads(_ scalable.Workload, _ context.Context) ([]scalable.Workload, error) {
+	return nil, nil
+}
+
 func (m *MockClient) GetNamespaceAnnotations(namespace string, ctx context.Context) (map[string]string, error) {
 	args := m.Called(namespace, ctx)
 	return args.Get(0).(map[string]string), args.Error(1)

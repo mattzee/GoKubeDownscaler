@@ -192,8 +192,10 @@ func (c *advancedCronJob) getSuspend() (currentValue, targetDownscaleState value
 }
 
 // setSuspend sets the value of the paused field on the advancedCronJob.
-func (c *advancedCronJob) setSuspend(suspend bool) {
+func (c *advancedCronJob) setSuspend(suspend bool) error {
 	c.Spec.Paused = &suspend
+
+	return nil
 }
 
 // Update updates the resource with all changes made to it. It should only be called once on a resource.

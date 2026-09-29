@@ -19,7 +19,7 @@ type suspendScaledResource interface {
 	// getSuspend gets the value of the suspend field on the workload
 	getSuspend() (values.Replicas, values.Replicas)
 	// setSuspend sets the value of the suspend field on the workload
-	setSuspend(suspend bool)
+	setSuspend(suspend bool) error
 	// getSavedResourcesRequests returns the saved CPU and memory requests for the workload based on the downscale replicas.
 	getSavedResourcesRequests() *metrics.SavedResources
 	// Copy creates a deep copy of the workload
@@ -58,6 +58,22 @@ func (r *suspendScaledWorkload) GetChildren(ctx context.Context, clientsets *Cli
 	return children, nil
 }
 
+// GetRequiredChildren delegates to the wrapped resource when it has children that
+// must be scaled even with scale-children off.
+func (r *suspendScaledWorkload) GetRequiredChildren(ctx context.Context, clientsets *Clientsets) ([]Workload, error) {
+	parent, ok := r.suspendScaledResource.(RequiredChildrenWorkload)
+	if !ok {
+		return nil, nil
+	}
+
+	children, err := parent.GetRequiredChildren(ctx, clientsets)
+	if err != nil {
+		return nil, fmt.Errorf("get required children from parent workload: %w", err)
+	}
+
+	return children, nil
+}
+
 // ScaleUp scales up the underlying suspendScaledResource.
 func (r *suspendScaledWorkload) ScaleUp(logger *slog.Logger) (scalingSummary, error) {
 	if logger == nil {
@@ -83,7 +99,9 @@ func (r *suspendScaledWorkload) ScaleUp(logger *slog.Logger) (scalingSummary, er
 		return summary, fmt.Errorf("failed to convert original state to bool: %w", err)
 	}
 
-	r.setSuspend(originalStateBool)
+	if err := r.setSuspend(originalStateBool); err != nil {
+		return summary, fmt.Errorf("failed to restore suspend state for workload: %w", err)
+	}
 
 	removeOriginalReplicas(r)
 
@@ -128,7 +146,11 @@ func (r *suspendScaledWorkload) ScaleDown(_ values.Replicas, logger *slog.Logger
 		return summary, nil
 	}
 
-	r.setSuspend(true)
+	// A failed suspend must not be recorded as a park: returning before setOriginalReplicas
+	// leaves the workload untouched, so nothing is written and the next scan retries.
+	if err := r.setSuspend(true); err != nil {
+		return summary, fmt.Errorf("failed to suspend workload: %w", err)
+	}
 
 	savedResources := r.getSavedResourcesRequests()
 

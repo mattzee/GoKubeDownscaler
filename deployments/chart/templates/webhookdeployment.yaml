@@ -18,8 +18,12 @@ spec:
     metadata:
       labels:
         {{- include "go-kube-downscaler.webhookController.selectorLabels" . | nindent 8 }}
-      {{- if or .Values.webhookController.podAnnotations .Values.forceRestartOnConfigChange }}
+      {{- if or .Values.webhookController.podAnnotations .Values.forceRestartOnConfigChange (include "go-kube-downscaler.hasIncludedDefinitions" .) }}
       annotations:
+        {{- if include "go-kube-downscaler.hasIncludedDefinitions" . }}
+        # Definitions are only read at startup, so a change must roll the pods.
+        checksum/workload-definitions: {{ include "go-kube-downscaler.workloadDefinitionsList" . | sha256sum }}
+        {{- end }}
         {{- if .Values.forceRestartOnConfigChange }}
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         {{- end }}
@@ -43,6 +47,9 @@ spec:
           {{- toYaml . | nindent 10 }}
           {{- end }}
           - --include-resources={{ join "," .Values.includedResources }}
+          {{- if include "go-kube-downscaler.hasIncludedDefinitions" . }}
+          - --workload-definitions-file=/etc/downscaler/workload-definitions.yaml
+          {{- end }}
           {{- if (not .Values.webhookController.certManager.enabled) }}
           - --internal-cert-rotation
           - --service-name={{ include "go-kube-downscaler.webhookController.fullname" . }}
@@ -78,6 +85,11 @@ spec:
             - name: tls
               mountPath: "/etc/webhook/tls"
               readOnly: true
+            {{- if include "go-kube-downscaler.hasIncludedDefinitions" . }}
+            - name: workload-definitions
+              mountPath: /etc/downscaler
+              readOnly: true
+            {{- end }}
           {{- if .Values.webhookController.healthProbes.readinessProbe.enabled }}
           readinessProbe:
             httpGet:
@@ -116,6 +128,11 @@ spec:
           secret:
             secretName: {{ include "go-kube-downscaler.webhookController.fullname" . }}
             optional: true
+        {{- if include "go-kube-downscaler.hasIncludedDefinitions" . }}
+        - name: workload-definitions
+          configMap:
+            name: {{ include "go-kube-downscaler.workloadDefinitionsConfigMapName" . }}
+        {{- end }}
       {{- with .Values.webhookController.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}

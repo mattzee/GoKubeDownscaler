@@ -11,6 +11,7 @@ import (
 	"github.com/caas-team/gokubedownscaler/internal/pkg/metrics"
 	"github.com/caas-team/gokubedownscaler/internal/pkg/util"
 	"github.com/caas-team/gokubedownscaler/internal/pkg/values"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -333,14 +334,29 @@ func isSupportedOwnerKind(kind string) bool {
 	return supported
 }
 
-// isManagedByOwnerReference checks if the workload is managed by an owner reference that is in the includedResources list.
+// isDefinedOwner checks whether the owner is a kind described by a workload definition that is in
+// includedResources. Only then does the owner scale it; otherwise the workload is left to its own scaler.
+// It matches on group and kind, since definitions can share a kind name across operators (e.g. "Cluster").
+func isDefinedOwner(ownerReference *metav1.OwnerReference) bool {
+	groupVersion, err := schema.ParseGroupVersion(ownerReference.APIVersion)
+	if err != nil {
+		return false
+	}
+
+	def := definitionByGroupKind(groupVersion.Group, ownerReference.Kind)
+
+	return def != nil && isIncludedDefinition(def)
+}
+
+// isManagedByOwnerReference checks if the workload is controlled by an owner the downscaler scales instead:
+// a supported built-in kind (whether or not it is included), or an included workload definition.
 func isManagedByOwnerReference(workload Workload) bool {
 	for _, ownerReference := range workload.GetOwnerReferences() {
 		if ownerReference.Controller == nil || !*ownerReference.Controller {
 			continue
 		}
 
-		if !isSupportedOwnerKind(ownerReference.Kind) {
+		if !isSupportedOwnerKind(ownerReference.Kind) && !isDefinedOwner(&ownerReference) {
 			continue
 		}
 

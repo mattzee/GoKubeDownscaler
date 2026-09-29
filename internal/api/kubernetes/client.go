@@ -6,6 +6,7 @@ import (
 	stdErrors "errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ import (
 	monitoring "github.com/prometheus-operator/prometheus-operator/pkg/client/versioned"
 	zalando "github.com/zalando-incubator/stackset-controller/pkg/clientset"
 	acidv1 "github.com/zalando/postgres-operator/pkg/apis/acid.zalan.do/v1"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -72,6 +74,8 @@ type Client interface {
 	addEvent(eventType, reason, identifier, message string, object *corev1.ObjectReference, ctx context.Context) error
 	// GetChildrenWorkloads gets the children workloads of the specified workload
 	GetChildrenWorkloads(workload scalable.Workload, ctx context.Context) ([]scalable.Workload, error)
+	// GetRequiredChildrenWorkloads gets the children that are scaled with the workload even when scale-children is off
+	GetRequiredChildrenWorkloads(workload scalable.Workload, ctx context.Context) ([]scalable.Workload, error)
 }
 
 // NewClient makes a new Client.
@@ -106,6 +110,9 @@ func NewClient(kubeconfig string, dryRun bool, qps float64, burst, timeout int) 
 	config.QPS = float32(qps)                             // available queries per second, when unused will fill the burst buffer
 	config.Burst = burst                                  // the max size of the buffer of queries
 	config.Timeout = time.Duration(timeout) * time.Second // set the timeout for requests to the Kubernetes API
+
+	// each API request becomes a child span of the caller's span when tracing is enabled, and a no-op when it is not
+	config.Wrap(func(roundTripper http.RoundTripper) http.RoundTripper { return otelhttp.NewTransport(roundTripper) })
 
 	clientsets.Kubernetes, err = kubernetes.NewForConfig(config)
 	if err != nil {
@@ -249,6 +256,21 @@ func (c client) GetChildrenWorkloads(workload scalable.Workload, ctx context.Con
 	}
 
 	return nil, nil
+}
+
+// GetRequiredChildrenWorkloads gets the children of the workload that are scaled with it even when scale-children is off.
+func (c client) GetRequiredChildrenWorkloads(workload scalable.Workload, ctx context.Context) ([]scalable.Workload, error) {
+	parent, ok := workload.(scalable.RequiredChildrenWorkload)
+	if !ok {
+		return nil, nil
+	}
+
+	children, err := parent.GetRequiredChildren(ctx, c.clientsets)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get required children workloads: %w", err)
+	}
+
+	return children, nil
 }
 
 // RegetWorkload gets the workload again to ensure the latest state.
@@ -529,7 +551,7 @@ func (c client) GetNamespaceScope(namespace string, ctx context.Context) (*value
 
 // GetScaledObjects gets all scaledobjects in the specified namespace.
 func (c client) GetScaledObjects(namespace string, ctx context.Context) ([]scalable.Workload, error) {
-	scaledObjects, err := scalable.GetWorkloads("scaledobject", namespace, c.clientsets, ctx)
+	scaledObjects, err := scalable.GetWorkloads(scalable.ScaledObjectsResource, namespace, c.clientsets, ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get scaledobjects: %w", err)
 	}
