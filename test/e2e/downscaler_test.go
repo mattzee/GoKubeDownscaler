@@ -99,8 +99,13 @@ func TestDownscaler(t *testing.T) {
 	})
 
 	t.Run("operator-owned StatefulSets are left to their operators", func(t *testing.T) {
+		// The operators copy their custom resource's annotations onto these
+		// StatefulSets, so original-replicas can be there; what matters is that
+		// the downscaler did not write it.
 		for _, name := range []string{"rabbit-server", "redis-replication"} {
-			require.Empty(t, stsAnnotation(ctx, t, name, originalReplicas),
+			sts, err := getSts(ctx, name)
+			require.NoError(t, err)
+			require.False(t, downscalerWroteAnnotation(sts.ManagedFields, originalReplicas),
 				"%s is owned by its operator's custom resource, so the statefulsets scaler must not downscale it", name)
 		}
 	})
@@ -521,15 +526,6 @@ func stsReplicas(ctx context.Context, t *testing.T, name string) int64 {
 	return int64(*sts.Spec.Replicas)
 }
 
-func stsAnnotation(ctx context.Context, t *testing.T, name, key string) string {
-	t.Helper()
-
-	sts, err := getSts(ctx, name)
-	require.NoError(t, err)
-
-	return sts.Annotations[key]
-}
-
 func stsAt(name string, want int64) check {
 	return check{
 		name: fmt.Sprintf("StatefulSet %s has %d replicas", name, want),
@@ -814,7 +810,9 @@ func noOriginalAnnotations(ctx context.Context) (bool, string) {
 	}
 
 	for _, sts := range statefulSets.Items {
-		if _, ok := sts.Annotations[originalReplicas]; ok {
+		// Operators copy annotations from their custom resources and never remove
+		// them, so only the downscaler's own writes count here.
+		if _, ok := sts.Annotations[originalReplicas]; ok && downscalerWroteAnnotation(sts.ManagedFields, originalReplicas) {
 			left = append(left, "StatefulSet/"+sts.Name)
 		}
 	}
@@ -831,4 +829,34 @@ func noOriginalAnnotations(ctx context.Context) (bool, string) {
 	}
 
 	return len(left) == 0, "still annotated: " + strings.Join(left, ", ")
+}
+
+// downscalerFieldManager is the field manager the downscaler's updates are recorded under.
+const downscalerFieldManager = "gokubedownscaler"
+
+// downscalerWroteAnnotation reports whether the downscaler's field manager owns
+// the annotation key, as opposed to an operator that copied it from its
+// custom resource.
+func downscalerWroteAnnotation(fields []metav1.ManagedFieldsEntry, key string) bool {
+	for _, entry := range fields {
+		if entry.Manager != downscalerFieldManager || entry.FieldsV1 == nil {
+			continue
+		}
+
+		var owned struct {
+			Metadata struct {
+				Annotations map[string]any `json:"f:annotations"`
+			} `json:"f:metadata"`
+		}
+
+		if err := json.Unmarshal(entry.FieldsV1.Raw, &owned); err != nil {
+			continue
+		}
+
+		if _, ok := owned.Metadata.Annotations["f:"+key]; ok {
+			return true
+		}
+	}
+
+	return false
 }
