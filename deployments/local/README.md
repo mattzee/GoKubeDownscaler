@@ -2,35 +2,44 @@
 
 Use this to check a change on your own machine before you push it: first the
 checks CI runs, then a run against real operators on Docker Desktop's
-Kubernetes. Run the commands from the repository root, in order.
+Kubernetes.
+Run the commands from the repository root, in order.
 
-- [0. Prerequisites](#0-prerequisites)
-- [1. CI checks, locally](#1-ci-checks-locally)
-- [2. Operators and the test environment](#2-operators-and-the-test-environment)
-- [3. Run the downscaler](#3-run-the-downscaler)
-- [4. Tests](#4-tests)
-- [5. Tear down](#5-tear-down)
+- [0.
+Prerequisites](#0-prerequisites)
+- [1.
+CI checks, locally](#1-ci-checks-locally)
+- [2.
+Operators and the test environment](#2-operators-and-the-test-environment)
+- [3.
+Run the downscaler](#3-run-the-downscaler)
+- [4.
+Tests](#4-tests)
+- [5.
+Tear down](#5-tear-down)
 
 The [`Makefile`](Makefile) here is a different path: it deploys through Argo CD
-and expects Argo CD, Gitea and a registry to be installed already. This README
+and expects Argo CD, Gitea and a registry to be installed already.
+This README
 needs none of those.
 
 ## 0. Prerequisites
 
 Install these however you prefer:
 
-| Tool | Used for |
-| --- | --- |
-| Docker Desktop, with Kubernetes enabled (`docker`, `kubectl`) | building images and the local cluster |
-| Go, at least the `go` version in `go.mod` | building and testing, running from source (3a) |
-| Helm | chart checks, installing operators and the chart |
-| [helm-unittest](https://github.com/helm-unittest/helm-unittest) Helm plugin | chart unit tests (1.2) |
-| Node.js with npm (`npx`) | the chart README check (1.2) |
-| cosign | image signing keys |
-| GnuPG (`gpg`) | the chart signing check (1.4) |
-| actionlint | linting the workflow files (1.5) |
+| Tool                                                                        | Used for                                         |
+| --------------------------------------------------------------------------- | ------------------------------------------------ |
+| Docker Desktop, with Kubernetes enabled (`docker`, `kubectl`)               | building images and the local cluster            |
+| Go, at least the `go` version in `go.mod`                                   | building and testing, running from source (3a)   |
+| Helm                                                                        | chart checks, installing operators and the chart |
+| [helm-unittest](https://github.com/helm-unittest/helm-unittest) Helm plugin | chart unit tests (1.2)                           |
+| Node.js with npm (`npx`)                                                    | the chart README check (1.2)                     |
+| cosign                                                                      | image signing keys                               |
+| GnuPG (`gpg`)                                                               | the chart signing check (1.4)                    |
+| actionlint                                                                  | linting the workflow files (1.5)                 |
 
-Point `kubectl` and `helm` at Docker Desktop's cluster. Both use the current
+Point `kubectl` and `helm` at Docker Desktop's cluster.
+Both use the current
 context, so check it before running anything else:
 
 ```bash
@@ -59,7 +68,8 @@ helm lint --strict "$CHART" --values "$CHART/examples/operator-workload-definiti
 helm unittest "$CHART"
 ```
 
-The chart README is generated from `values.yaml`. Regenerate it and check that
+The chart README is generated from `values.yaml`.
+Regenerate it and check that
 nothing changed:
 
 ```bash
@@ -78,7 +88,8 @@ docker buildx build --platform linux/amd64,linux/arm64 -f build/admissioncontrol
 
 ### 1.4 Chart package and signature (Build and push helm chart, without the push)
 
-This signs with a throwaway key. It checks the packaging and signing steps;
+This signs with a throwaway key.
+It checks the packaging and signing steps;
 your real key is only used by the workflow.
 
 ```bash
@@ -103,19 +114,20 @@ actionlint
 
 This is laid out as it would be in a real cluster: each operator runs in its
 own namespace, and the sample workloads run in a namespace of their own,
-`downscaler-e2e`, with no operators in it. The downscaler is limited to
+`downscaler-e2e`, with no operators in it.
+The downscaler is limited to
 `downscaler-e2e`, so it can never scale an operator.
 
-| Namespace | Contains |
-| --- | --- |
-| `cert-manager` | cert-manager, which issues the RabbitMQ operator's webhook certificate |
-| `rabbitmq-system` | RabbitMQ cluster operator |
-| `elastic-system` | ECK (Elasticsearch) operator |
-| `redis-operator` | OT Redis operator |
-| `cnpg-system` | CloudNativePG (Postgres) operator |
-| `mongodb-operator` | MongoDB Community operator |
-| `downscaler-e2e` | the sample workloads: one of each kind the operators manage, plus plain Deployments |
-| `downscaler` | the downscaler itself, when run in the cluster (3b) |
+| Namespace          | Contains                                                                            |
+| ------------------ | ----------------------------------------------------------------------------------- |
+| `cert-manager`     | cert-manager, which issues the RabbitMQ operator's webhook certificate              |
+| `rabbitmq-system`  | RabbitMQ cluster operator                                                           |
+| `elastic-system`   | ECK (Elasticsearch) operator                                                        |
+| `redis-operator`   | OT Redis operator                                                                   |
+| `cnpg-system`      | CloudNativePG (Postgres) operator                                                   |
+| `mongodb-operator` | MongoDB Community operator                                                          |
+| `downscaler-e2e`   | the sample workloads: one of each kind the operators manage, plus plain Deployments |
+| `downscaler`       | the downscaler itself, when run in the cluster (3b)                                 |
 
 RabbitMQ, Elasticsearch and Redis are scaled through the example definitions in
 [`../chart/examples/operator-workload-definitions.yaml`](../chart/examples/operator-workload-definitions.yaml).
@@ -124,7 +136,8 @@ scaling still works next to the definitions.
 
 ### 2.1 The test environment namespace
 
-Create it first. The MongoDB Community operator is configured to watch it, and
+Create it first.
+The MongoDB Community operator is configured to watch it, and
 it puts the service account and role that MongoDB's own pods run with into that
 namespace, which is how the operator works:
 
@@ -147,7 +160,8 @@ kubectl -n cert-manager rollout status deploy/cert-manager-webhook
 
 ### 2.3 Operators
 
-Each into its own namespace. Every command here is safe to run again:
+Each into its own namespace.
+Every command here is safe to run again:
 
 ```bash
 kubectl apply -f https://github.com/rabbitmq/cluster-operator/releases/download/v2.23.3/cluster-operator.yml
@@ -170,7 +184,8 @@ kubectl -n mongodb-operator rollout status deploy/mongodb-kubernetes-operator
 
 ### 2.4 Sample workloads
 
-Create the sample workloads, sized to fit on a laptop. They are in
+Create the sample workloads, sized to fit on a laptop.
+They are in
 [`test/e2e/testdata/environment.yaml`](../../test/e2e/testdata/environment.yaml),
 which the end-to-end tests use too:
 
@@ -178,7 +193,8 @@ which the end-to-end tests use too:
 kubectl apply -n downscaler-e2e -f test/e2e/testdata/environment.yaml
 ```
 
-Wait until everything is running (Elasticsearch takes a few minutes). MongoDB
+Wait until everything is running (Elasticsearch takes a few minutes).
+MongoDB
 must also reach `Running`: the downscaler refuses to scale it to 0 until the
 operator has recorded a working configuration
 (`mongodb.com/v1.lastSuccessfulConfiguration`), and logs `scaling refused`
@@ -196,7 +212,8 @@ Choose one. 3a is the quick loop for code changes. 3b also tests the chart:
 RBAC, the definitions ConfigMap and the Deployment.
 
 Both use the same resources: the four definitions, the built-in `cnpgclusters`
-and `mongodbcommunities`, plus `deployments` and `statefulsets`. Including `statefulsets` checks that the StatefulSets the
+and `mongodbcommunities`, plus `deployments` and `statefulsets`.
+Including `statefulsets` checks that the StatefulSets the
 operators own are left to their operators and are not scaled a second time.
 
 ```bash
@@ -225,7 +242,8 @@ Leave it running and use a second shell for section 4.
 
 ### 3b. In the cluster, from the chart
 
-Build the image, then install the chart from this checkout. Docker Desktop's
+Build the image, then install the chart from this checkout.
+Docker Desktop's
 cluster pulls images straight from the local Docker image store, so no registry
 is needed: the chart only has to use the exact name the image was built with.
 
@@ -250,15 +268,18 @@ The deployment name follows the chart's fullname; `kubectl -n downscaler get dep
 
 These are the steps `TestDownscaler` in
 [`test/e2e/downscaler_test.go`](../../test/e2e/downscaler_test.go) runs, in the
-same order. Run them by hand here, or run them all with Go:
+same order.
+Run them by hand here, or run them all with Go:
 
 ```bash
 go test -tags e2e -v -timeout 60m ./test/e2e/...
 ```
 
-The Go suite does sections 2 and 3b itself first. On a cluster already set up
+The Go suite does sections 2 and 3b itself first.
+On a cluster already set up
 from them, skip that with `E2E_SKIP_SETUP=1`; `E2E_TEARDOWN=1` removes everything
-afterwards. The Go suite runs the downscaler as in 3b, so the health checks in
+afterwards.
+The Go suite runs the downscaler as in 3b, so the health checks in
 4.2 need 3b; the rest also works with 3a.
 
 A snapshot of everything the tests look at:
@@ -277,7 +298,8 @@ snap
 ```
 
 The downscaler scans every 10 seconds, so after each change allow about 30
-seconds before checking (`sleep 30; snap`). Elasticsearch, MongoDB and Postgres
+seconds before checking (`sleep 30; snap`).
+Elasticsearch, MongoDB and Postgres
 take longer to come back up.
 
 ### 4.1 Preconditions
@@ -306,7 +328,8 @@ kubectl -n downscaler logs "$POD" | grep -ic forbidden
 ```
 
 The `loaded workload definitions` line lists `rabbitmqclusters`,
-`elasticsearches`, `redisreplications` and `redissentinels`. The last command
+`elasticsearches`, `redisreplications` and `redissentinels`.
+The last command
 prints `0`.
 
 ### 4.3 The whole environment
@@ -320,24 +343,26 @@ kubectl annotate namespace downscaler-e2e downscaler/force-downtime=true downsca
 sleep 30; snap
 ```
 
-| Workload | Expected |
-| --- | --- |
-| `rabbit` | `spec.replicas` 0, original 1; StatefulSet `rabbit-server` 0 through the operator |
-| `search` | `eck.k8s.elastic.co/pause-orchestration` `true`; StatefulSet `search-es-default` 0, scaled as a child since pausing leaves the pods running, with its original replicas saved |
-| `redis-replication` | `spec.clusterSize` 0, original 2; StatefulSet `redis-replication` 0 through the operator |
-| `redis-sentinel` | `spec.clusterSize` 1 (the CRD minimum), original 3; StatefulSet `redis-sentinel-sentinel` 0 as a child, original saved |
-| `pg` (built in) | `cnpg.io/hibernation` `on`; the `pg-1` pod is gone, its volume kept |
-| `mongo` (built in) | `spec.members` 0, original 1; StatefulSet `mongo` 0 as a child, original saved |
-| `web` | replicas 0, original 2 |
+| Workload            | Expected                                                                                                                                                                      |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rabbit`            | `spec.replicas` 0, original 1; StatefulSet `rabbit-server` 0 through the operator                                                                                             |
+| `search`            | `eck.k8s.elastic.co/pause-orchestration` `true`; StatefulSet `search-es-default` 0, scaled as a child since pausing leaves the pods running, with its original replicas saved |
+| `redis-replication` | `spec.clusterSize` 0, original 2; StatefulSet `redis-replication` 0 through the operator                                                                                      |
+| `redis-sentinel`    | `spec.clusterSize` 1 (the CRD minimum), original 3; StatefulSet `redis-sentinel-sentinel` 0 as a child, original saved                                                        |
+| `pg` (built in)     | `cnpg.io/hibernation` `on`; the `pg-1` pod is gone, its volume kept                                                                                                           |
+| `mongo` (built in)  | `spec.members` 0, original 1; StatefulSet `mongo` 0 as a child, original saved                                                                                                |
+| `web`               | replicas 0, original 2                                                                                                                                                        |
 
 Then, still downscaled:
 
 - Excluded workload: `web-excluded` (annotated `downscaler/exclude: "true"`)
   is still at 1, with no original-replicas annotation.
 - Operator-owned StatefulSets: `rabbit-server` and `redis-replication` have no
-  original-replicas annotation. Their operators scale them, so the
+  original-replicas annotation.
+Their operators scale them, so the
   `statefulsets` scaler must leave them alone.
-- Repeated scans change nothing: wait three scan intervals and compare. A
+- Repeated scans change nothing: wait three scan intervals and compare.
+A
   sentinel whose original changed from 3 to 1 would mean it was downscaled twice.
 
   ```bash
@@ -356,7 +381,8 @@ Everything is back to its original value: rabbit 1, search unpaused
 (`false`), replication 2, sentinel 3, pg `off` with its pod back, mongo 1,
 web 2, and no original-replicas annotations are left anywhere.
 
-Hand back to the schedule: remove the override. Nothing changes, because no
+Hand back to the schedule: remove the override.
+Nothing changes, because no
 schedule is set:
 
 ```bash
@@ -367,21 +393,23 @@ sleep 30; snap
 ### 4.4 Each operator on its own
 
 The window goes on the operator's own resource instead of the Namespace, and
-overrides the Namespace for that resource only. The Go suite runs all five at
+overrides the Namespace for that resource only.
+The Go suite runs all five at
 the same time; by hand, run them together or one at a time.
 
 Note the `GENERATION` of `web` and `web-excluded` in `snap` first: neither may
 change during this section, which shows nothing reached the environment level.
 
-| Operator | Resources | Expected down | Expected up |
-| --- | --- | --- | --- |
-| RabbitMQ | `rabbitmqcluster/rabbit` | replicas 0, StatefulSet `rabbit-server` 0 | replicas 1 |
-| Elasticsearch | `elasticsearch/search` | paused `true`, StatefulSet `search-es-default` 0 | paused `false`, StatefulSet restored |
-| Redis | `redisreplication/redis-replication`, `redissentinel/redis-sentinel` | clusterSize 0 and 1, StatefulSet `redis-sentinel-sentinel` 0 | clusterSize 2 and 3, StatefulSet restored |
-| Postgres | `cluster.postgresql.cnpg.io/pg` | hibernation `on`, no `pg` pods | hibernation `off` |
-| MongoDB | `mongodbcommunity/mongo` | members 0, StatefulSet `mongo` 0 | members 1, StatefulSet restored |
+| Operator      | Resources                                                            | Expected down                                                | Expected up                               |
+| ------------- | -------------------------------------------------------------------- | ------------------------------------------------------------ | ----------------------------------------- |
+| RabbitMQ      | `rabbitmqcluster/rabbit`                                             | replicas 0, StatefulSet `rabbit-server` 0                    | replicas 1                                |
+| Elasticsearch | `elasticsearch/search`                                               | paused `true`, StatefulSet `search-es-default` 0             | paused `false`, StatefulSet restored      |
+| Redis         | `redisreplication/redis-replication`, `redissentinel/redis-sentinel` | clusterSize 0 and 1, StatefulSet `redis-sentinel-sentinel` 0 | clusterSize 2 and 3, StatefulSet restored |
+| Postgres      | `cluster.postgresql.cnpg.io/pg`                                      | hibernation `on`, no `pg` pods                               | hibernation `off`                         |
+| MongoDB       | `mongodbcommunity/mongo`                                             | members 0, StatefulSet `mongo` 0                             | members 1, StatefulSet restored           |
 
-For each, downscale, check, upscale, check, then remove the override. For
+For each, downscale, check, upscale, check, then remove the override.
+For
 RabbitMQ:
 
 ```bash
@@ -396,7 +424,8 @@ The same three commands work for every resource in the table; Redis needs both o
 
 ### 4.5 Expired windows
 
-A force window can be an absolute time span. Once it has ended it counts as
+A force window can be an absolute time span.
+Once it has ended it counts as
 unset, so whatever is below it applies again.
 
 An expired workload window yields to the environment. `web` carries a
@@ -415,9 +444,11 @@ kubectl -n downscaler-e2e annotate deployment/web downscaler/force-uptime-
 
 `web` goes to 0, then back to 2.
 
-An expired environment window hands back to the schedule. The environment's
+An expired environment window hands back to the schedule.
+The environment's
 schedule is `always` up, with a forced downtime for the next 90 seconds: `web`
-goes down during the window and comes back on its own after it ends. Build the
+goes down during the window and comes back on its own after it ends.
+Build the
 window with `date` (macOS shown; on Linux use `date -u -d '+90 seconds' +%FT%TZ`):
 
 ```bash

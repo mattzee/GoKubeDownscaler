@@ -52,7 +52,7 @@ type Replicas struct {
 	Minimum int32 `json:"minimum,omitempty"`
 }
 
-// Suspend describes a suspend-shaped resource, toggled by an annotation the operator honours.
+// Suspend describes a suspend-shaped resource, toggled by an annotation the operator honors.
 type Suspend struct {
 	Annotation     string `json:"annotation"`
 	SuspendedValue string `json:"suspendedValue"`

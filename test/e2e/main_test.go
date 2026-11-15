@@ -273,8 +273,12 @@ func tearDown() {
 	}
 
 	for _, r := range []struct{ release, namespace string }{
-		{release, downscalerNamespace}, {"community-operator", "mongodb-operator"}, {"cnpg", "cnpg-system"},
-		{"redis-operator", "redis-operator"}, {"elastic-operator", "elastic-system"}, {"cert-manager", "cert-manager"},
+		{release, downscalerNamespace},
+		{"community-operator", "mongodb-operator"},
+		{"cnpg", "cnpg-system"},
+		{"redis-operator", "redis-operator"},
+		{"elastic-operator", "elastic-system"},
+		{"cert-manager", "cert-manager"},
 	} {
 		_ = helm("uninstall", r.release, "-n", r.namespace)
 		_ = kubectl("delete", "namespace", r.namespace, "--wait=false")

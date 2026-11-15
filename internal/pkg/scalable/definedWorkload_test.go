@@ -360,8 +360,10 @@ func TestDefinitionRegistry(t *testing.T) {
 		{Resource: "mykruisesets", Group: "apps.kruise.io", Version: "v1beta1", Kind: "StatefulSet"},
 	}, nil), definitions.ErrInvalidDefinition, "the kind name alone is not enough, the group must match too")
 	require.ErrorIs(t, RegisterDefinitions([]definitions.Definition{
-		{Resource: "mypostgres", Group: "postgresql.cnpg.io", Version: "v1", Kind: "Cluster",
-			Suspend: &definitions.Suspend{Annotation: "cnpg.io/hibernation", SuspendedValue: "on", ResumedValue: "off"}},
+		{
+			Resource: "mypostgres", Group: "postgresql.cnpg.io", Version: "v1", Kind: "Cluster",
+			Suspend: &definitions.Suspend{Annotation: "cnpg.io/hibernation", SuspendedValue: "on", ResumedValue: "off"},
+		},
 	}, nil), definitions.ErrInvalidDefinition, "built-in operator scalers such as CNPG cannot be redefined")
 	require.NoError(t, RegisterDefinitions(list, included))
 

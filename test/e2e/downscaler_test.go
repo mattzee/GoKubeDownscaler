@@ -339,7 +339,7 @@ func upscaledChecks(originals map[string]int64) []check {
 		stsAt("mongo", originals["mongo"]),
 
 		deploymentAt("web", 2),
-		check{"no " + originalReplicas + " annotations are left", noOriginalAnnotations},
+		{"no " + originalReplicas + " annotations are left", noOriginalAnnotations},
 	}
 }
 
