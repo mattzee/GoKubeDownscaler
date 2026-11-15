@@ -7,3 +7,6 @@ website/.docusaurus
 mise.toml
 mise.lock
 dist/
+
+# e2e test output (test/e2e/logfile_test.go)
+test/e2e/*.log

@@ -14,6 +14,9 @@
 //	E2E_DOWNSCALER_LOGS=info  stream the downscaler's logs while the tests run:
 //	                          "info" for scale actions, warnings and errors,
 //	                          "debug" for every line
+//	E2E_LOG_FILE=path         where to write a copy of all output, with a time on
+//	                          every line (default test/e2e/e2e.log; the run
+//	                          before is kept as e2e.prev.log)
 //
 // The setup matches deployments/local/README.md, so a cluster set up by hand
 // from the README can be tested with E2E_SKIP_SETUP=1.
@@ -81,13 +84,19 @@ var (
 )
 
 func TestMain(m *testing.M) {
-	os.Exit(run(m))
-}
-
-func run(m *testing.M) int {
 	_, file, _, _ := runtime.Caller(0)
 	repoRoot = filepath.Join(filepath.Dir(file), "..", "..")
 
+	stopLog := teeOutput(logFilePath())
+
+	code := run(m)
+
+	progress("finished with exit code %d", code)
+	stopLog()
+	os.Exit(code)
+}
+
+func run(m *testing.M) int {
 	var err error
 
 	k8s, err = connect()
