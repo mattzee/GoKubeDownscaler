@@ -44,38 +44,48 @@ type check struct {
 func TestDownscaler(t *testing.T) {
 	ctx := context.Background()
 
+	// Cleanups run last-registered first, so the report comes after the rest
+	// and its wait lets the log follower catch the final scale actions.
+	t.Cleanup(func() {
+		time.Sleep(2 * time.Second)
+		writeEvidenceReport(t, !t.Failed())
+	})
 	t.Cleanup(func() { _ = clearForceAnnotations(ctx) })
 	t.Cleanup(func() { logDownscalerOnFailure(ctx, t) })
 
-	t.Run("preconditions", func(t *testing.T) {
-		eventually(t, readyTimeout, check{"all pods in " + envNamespace + " are ready", podsReady})
-		eventually(t, readyTimeout, check{"MongoDBCommunity mongo is Running", func(ctx context.Context) (bool, string) {
-			phase := crString(ctx, mongoDBCommunityGVK, "mongo", "status", "phase")
-			return phase == "Running", "phase " + phase
-		}})
+	preconditionsMet := t.Run("preconditions", func(t *testing.T) {
 		eventually(t, readyTimeout, check{"the downscaler is ready", downscalerReady})
+		eventually(t, readyTimeout, check{"all pods in " + envNamespace + " are ready", podsReady})
+		expectHealthy(t, "every operator must start healthy")
 	})
+	if !preconditionsMet {
+		// Scaling a broken environment would only produce misleading results.
+		t.Fatal("stopping: the environment is not healthy, so nothing after the preconditions would be meaningful")
+	}
 
 	t.Run("downscaler health", func(t *testing.T) {
 		pod := downscalerPod(ctx, t)
 
 		for _, path := range []string{"/healthz", "/readyz"} {
-			_, err := k8s.kube.CoreV1().Pods(downscalerNamespace).ProxyGet("http", pod, "8080", path, nil).DoRaw(ctx)
-			require.NoError(t, err, "GET %s", path)
+			body, err := k8s.kube.CoreV1().Pods(downscalerNamespace).ProxyGet("http", pod, "8080", path, nil).DoRaw(ctx)
+			verify(t, "GET "+path+" succeeds", err == nil, resultOf(err, strings.TrimSpace(string(body))))
 		}
 
 		metrics, err := k8s.kube.CoreV1().Pods(downscalerNamespace).ProxyGet("http", pod, "8080", "/metrics", nil).DoRaw(ctx)
-		require.NoError(t, err, "GET /metrics")
-		require.Contains(t, string(metrics), "kubedownscaler_cycle_executions_total")
+		verify(t, "GET /metrics succeeds", err == nil, resultOf(err, fmt.Sprintf("%d bytes", len(metrics))))
+		verify(t, "/metrics has kubedownscaler_cycle_executions_total",
+			strings.Contains(string(metrics), "kubedownscaler_cycle_executions_total"), presence(string(metrics), "kubedownscaler_cycle_executions_total"))
 
 		logs := downscalerLogs(ctx, t, pod)
-		require.Contains(t, logs, "loaded workload definitions")
+		verify(t, "the downscaler logged \"loaded workload definitions\"",
+			strings.Contains(logs, "loaded workload definitions"), presence(logs, "loaded workload definitions"))
 
 		for _, resource := range []string{"rabbitmqclusters", "elasticsearches", "redisreplications", "redissentinels"} {
-			require.Contains(t, logs, resource, "the definitions log line lists %s", resource)
+			verify(t, "the loaded definitions include "+resource, strings.Contains(logs, resource), presence(logs, resource))
 		}
 
-		require.NotContains(t, strings.ToLower(logs), "forbidden", "the chart's RBAC covers every included resource")
+		forbidden := strings.Count(strings.ToLower(logs), "forbidden")
+		verify(t, "no RBAC \"forbidden\" errors in the downscaler log", forbidden == 0, fmt.Sprintf("%d occurrences", forbidden))
 	})
 
 	originals := map[string]int64{
@@ -94,8 +104,10 @@ func TestDownscaler(t *testing.T) {
 
 	t.Run("excluded workload stays up", func(t *testing.T) {
 		replicas := deploymentReplicas(ctx, t, "web-excluded")
-		require.Equal(t, int64(1), replicas)
-		require.Empty(t, deploymentAnnotation(ctx, t, "web-excluded", originalReplicas))
+		verify(t, "Deployment web-excluded still has 1 replica", replicas == 1, fmt.Sprintf("%d", replicas))
+
+		annotation := deploymentAnnotation(ctx, t, "web-excluded", originalReplicas)
+		verify(t, "Deployment web-excluded has no "+originalReplicas+" annotation", annotation == "", fmt.Sprintf("%q", annotation))
 	})
 
 	t.Run("operator-owned StatefulSets are left to their operators", func(t *testing.T) {
@@ -105,8 +117,15 @@ func TestDownscaler(t *testing.T) {
 		for _, name := range []string{"rabbit-server", "redis-replication"} {
 			sts, err := getSts(ctx, name)
 			require.NoError(t, err)
-			require.False(t, downscalerWroteAnnotation(sts.ManagedFields, originalReplicas),
-				"%s is owned by its operator's custom resource, so the statefulsets scaler must not downscale it", name)
+
+			wrote := downscalerWroteAnnotation(sts.ManagedFields, originalReplicas)
+			seen := "not written by the downscaler"
+
+			if wrote {
+				seen = "written by the downscaler"
+			}
+
+			verify(t, "StatefulSet "+name+" (operator-owned) was not downscaled by the statefulsets scaler", !wrote, seen)
 		}
 	})
 
@@ -115,7 +134,9 @@ func TestDownscaler(t *testing.T) {
 
 		pause(t, 3*scanInterval, "three scans, then compare every workload")
 
-		require.Equal(t, before, snapshot(ctx, t))
+		changed := diffSnapshots(before, snapshot(ctx, t))
+		verify(t, fmt.Sprintf("all %d tracked values unchanged over three scans", len(before)),
+			len(changed) == 0, orNone(strings.Join(changed, "; ")))
 	})
 
 	t.Run("upscale", func(t *testing.T) {
@@ -126,6 +147,7 @@ func TestDownscaler(t *testing.T) {
 		}
 
 		eventually(t, readyTimeout, check{"all pods in " + envNamespace + " are ready again", podsReady})
+		expectHealthy(t, "every operator must be healthy again after the upscale")
 	})
 
 	t.Run("hand back to schedule", func(t *testing.T) {
@@ -153,9 +175,10 @@ func TestDownscaler(t *testing.T) {
 			}
 		})
 
-		for name, generation := range untouched {
-			require.Equal(t, generation, deploymentGeneration(ctx, t, name),
-				"Deployment %s must not change while single operators are scaled", name)
+		for _, name := range []string{"web", "web-excluded"} {
+			after := deploymentGeneration(ctx, t, name)
+			verify(t, "Deployment "+name+" unchanged while single operators were scaled",
+				after == untouched[name], fmt.Sprintf("generation %d → %d", untouched[name], after))
 		}
 	})
 
@@ -185,6 +208,10 @@ func TestDownscaler(t *testing.T) {
 			eventually(t, 60*time.Second, deploymentAt("web", 0))
 			eventually(t, scaleTimeout, deploymentAt("web", 2))
 		})
+	})
+
+	t.Run("everything is healthy at the end", func(t *testing.T) {
+		expectHealthy(t, "the run must leave every operator healthy")
 	})
 }
 
@@ -292,6 +319,8 @@ func runOperatorScenario(ctx context.Context, t *testing.T, op operatorScenario)
 		eventually(t, scaleTimeout, c)
 	}
 
+	expectHealthy(t, op.name+" must be healthy again after its own scale-up", op.name)
+
 	annotateTargets(map[string]any{forceUptime: nil})
 }
 
@@ -370,10 +399,12 @@ func eventually(t *testing.T, timeout time.Duration, c check) {
 	for {
 		ok, seen := c.ok(ctx)
 		if ok {
+			recordCheck(t, c.name, seen, since(start), true)
+
 			if waited {
-				t.Logf("ok:   %s (after %s)", c.name, since(start))
+				t.Logf("ok:   %s (after %s), saw: %s", c.name, since(start), seen)
 			} else {
-				t.Logf("ok:   %s", c.name)
+				t.Logf("ok:   %s, saw: %s", c.name, seen)
 			}
 
 			return
@@ -395,6 +426,7 @@ func eventually(t *testing.T, timeout time.Duration, c check) {
 		last = seen
 
 		if time.Now().After(deadline) {
+			recordCheck(t, c.name, last, since(start), false)
 			t.Fatalf("%s: not true after %s (last seen: %s)", c.name, timeout, last)
 		}
 
@@ -859,4 +891,55 @@ func downscalerWroteAnnotation(fields []metav1.ManagedFieldsEntry, key string) b
 	}
 
 	return false
+}
+
+// resultOf describes a request result for the evidence report.
+func resultOf(err error, body string) string {
+	if err != nil {
+		return "error: " + err.Error()
+	}
+
+	if body == "" {
+		return "ok"
+	}
+
+	return body
+}
+
+// presence says whether want occurs in s, for the evidence report.
+func presence(s, want string) string {
+	if strings.Contains(s, want) {
+		return "present"
+	}
+
+	return "missing"
+}
+
+func orNone(s string) string {
+	if s == "" {
+		return "no changes"
+	}
+
+	return s
+}
+
+// diffSnapshots lists every value that differs between two snapshots.
+func diffSnapshots(before, after map[string]string) []string {
+	var changed []string
+
+	for key, was := range before {
+		if now, ok := after[key]; !ok || now != was {
+			changed = append(changed, fmt.Sprintf("%s: %q → %q", key, was, now))
+		}
+	}
+
+	for key, now := range after {
+		if _, ok := before[key]; !ok {
+			changed = append(changed, fmt.Sprintf("%s: new %q", key, now))
+		}
+	}
+
+	sort.Strings(changed)
+
+	return changed
 }

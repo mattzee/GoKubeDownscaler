@@ -24,13 +24,23 @@ var logLevels = map[string]int{"DEBUG": 0, "INFO": 1, "WARN": 2, "ERROR": 3}
 // "debug" shows everything, any other non-empty value shows info and above
 // (every scale action, warnings and errors). It follows the newest pod across
 // restarts and rollouts.
+//
+// It always records the downscaler's scale actions for the evidence report;
+// with E2E_DOWNSCALER_LOGS unset it prints nothing.
 func followDownscalerLogs(ctx context.Context, setting string) {
 	minLevel := logLevels["INFO"]
-	if strings.EqualFold(setting, "debug") {
+
+	switch {
+	case setting == "":
+		minLevel = len(logLevels) // above every level: print nothing
+		progress("recording the downscaler's scale actions (set E2E_DOWNSCALER_LOGS=info to see its log)")
+	case strings.EqualFold(setting, "debug"):
 		minLevel = logLevels["DEBUG"]
 	}
 
-	progress("following the downscaler's logs (E2E_DOWNSCALER_LOGS=%s)", setting)
+	if setting != "" {
+		progress("following the downscaler's logs (E2E_DOWNSCALER_LOGS=%s)", setting)
+	}
 
 	var (
 		pod   string
@@ -85,6 +95,8 @@ func streamLogs(ctx context.Context, pod string, options *corev1.PodLogOptions, 
 		} else {
 			line, last = scanner.Text(), time.Now()
 		}
+
+		recordScaleLine(line, last)
 
 		if formatted, show := formatLogLine(line, minLevel); show {
 			fmt.Fprintf(os.Stderr, "%s downscaler: %s\n", last.Local().Format("15:04:05"), formatted)

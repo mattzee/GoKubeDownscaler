@@ -10,3 +10,4 @@ dist/
 
 # e2e test output (test/e2e/logfile_test.go)
 test/e2e/*.log
+test/e2e/e2e-report.md

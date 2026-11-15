@@ -115,9 +115,7 @@ func run(m *testing.M) int {
 	logsCtx, stopLogs := context.WithCancel(context.Background())
 	defer stopLogs()
 
-	if setting := os.Getenv("E2E_DOWNSCALER_LOGS"); setting != "" {
-		go followDownscalerLogs(logsCtx, setting)
-	}
+	go followDownscalerLogs(logsCtx, os.Getenv("E2E_DOWNSCALER_LOGS"))
 
 	code := m.Run()
 
