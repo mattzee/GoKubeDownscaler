@@ -1,0 +1,132 @@
+apiVersion: rabbitmq.com/v1beta1
+kind: RabbitmqCluster
+metadata:
+  name: rabbit
+spec:
+  replicas: 1
+  resources:
+    requests: { cpu: 100m, memory: 512Mi }
+    limits: { cpu: "1", memory: 1Gi }
+---
+apiVersion: elasticsearch.k8s.elastic.co/v1
+kind: Elasticsearch
+metadata:
+  name: search
+spec:
+  version: 9.4.3
+  nodeSets:
+    - name: default
+      count: 1
+      config:
+        node.store.allow_mmap: false
+      podTemplate:
+        spec:
+          containers:
+            - name: elasticsearch
+              resources:
+                requests: { cpu: 250m, memory: 2Gi }
+                limits: { memory: 2Gi }
+---
+apiVersion: redis.redis.opstreelabs.in/v1beta2
+kind: RedisReplication
+metadata:
+  name: redis-replication
+spec:
+  clusterSize: 2
+  podSecurityContext: { runAsUser: 1000, fsGroup: 1000 }
+  kubernetesConfig:
+    image: quay.io/opstree/redis:v8.2.9
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+  storage:
+    volumeClaimTemplate:
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources: { requests: { storage: 1Gi } }
+---
+apiVersion: redis.redis.opstreelabs.in/v1beta2
+kind: RedisSentinel
+metadata:
+  name: redis-sentinel
+spec:
+  clusterSize: 3
+  podSecurityContext: { runAsUser: 1000, fsGroup: 1000 }
+  redisSentinelConfig:
+    redisReplicationName: redis-replication
+  kubernetesConfig:
+    image: quay.io/opstree/redis-sentinel:v8.2.9
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: pg
+spec:
+  instances: 1
+  storage: { size: 1Gi }
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mongo-admin-password
+type: Opaque
+stringData:
+  password: local-test-only
+---
+apiVersion: mongodbcommunity.mongodb.com/v1
+kind: MongoDBCommunity
+metadata:
+  name: mongo
+spec:
+  members: 1
+  type: ReplicaSet
+  version: "6.0.5"
+  security:
+    authentication:
+      modes: ["SCRAM"]
+  users:
+    - name: admin
+      db: admin
+      passwordSecretRef:
+        name: mongo-admin-password
+      roles:
+        - { name: clusterAdmin, db: admin }
+        - { name: userAdminAnyDatabase, db: admin }
+      scramCredentialsSecretName: mongo-admin-scram
+---
+# A plain Deployment, to show built-in scaling still works alongside definitions
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: web } }
+  template:
+    metadata: { labels: { app: web } }
+    spec:
+      containers:
+        - name: web
+          image: nginx:1.29
+          resources: { requests: { cpu: 10m, memory: 16Mi } }
+---
+# Excluded with downscaler/exclude, so it must stay up during a downscale
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-excluded
+  annotations:
+    downscaler/exclude: "true"
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: web-excluded } }
+  template:
+    metadata: { labels: { app: web-excluded } }
+    spec:
+      containers:
+        - name: web
+          image: nginx:1.29
+          resources: { requests: { cpu: 10m, memory: 16Mi } }
