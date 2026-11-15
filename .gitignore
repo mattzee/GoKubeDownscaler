@@ -6,3 +6,4 @@ website/build
 website/.docusaurus
 mise.toml
 mise.lock
+dist/
