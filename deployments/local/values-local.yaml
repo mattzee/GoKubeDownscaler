@@ -1,0 +1,51 @@
+# Downscaler values for the local docker-desktop rig, applied on top of the
+# chart by deployments/local/argocd-application.yaml.
+#
+# image.repository and imagePullSecrets are set by the Makefile: the published
+# image and pull Secret for `make deploy-published`, the local registry for
+# `make deploy`. The chart's appVersion supplies the tag.
+image:
+  pullPolicy: IfNotPresent
+
+# Scan often so parking and starting show up quickly in the UI.
+extraArguments:
+  - --interval=30s
+
+# Everything the parking demo namespaces run. The data-tier entries scale the
+# operators' custom resources, never the StatefulSets those operators own.
+includedResources:
+  - deployments
+  - statefulsets
+  - rabbitmqclusters
+  - cnpgclusters
+  - elasticsearches
+  - mongodbcommunities
+  - redisreplications
+  - redissentinels
+
+excludedNamespaces:
+  - downscaler
+  - kube-system
+  - argocd
+  - gitea
+
+logging:
+  json: true
+  debug: false
+
+# docker-desktop enforces no NetworkPolicy, so this renders but changes nothing;
+# kept on so the rig deploys what a real cluster would.
+networkPolicy:
+  enabled: true
+
+# The rig has no Prometheus Operator CRDs; turn these on where it does.
+serviceMonitor:
+  enabled: false
+prometheusRule:
+  enabled: false
+
+# Point at an OTLP collector when the rig runs one, e.g.
+#   enabled: true
+#   endpoint: http://alloy.monitoring.svc.cluster.local:4317
+tracing:
+  enabled: false

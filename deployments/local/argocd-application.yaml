@@ -1,0 +1,49 @@
+# Argo CD Application for the downscaler on the local docker-desktop rig.
+#
+# Installs a published chart version straight from an OCI registry, with the
+# rig's values inlined. The registry needs a login: run `make registry-secrets`
+# once first.
+#
+#   make -C deployments/local deploy-published VERSION=<chart version>   # a published chart
+#   make -C deployments/local deploy                                     # build + publish to Gitea, then deploy that
+#   make -C deployments/local undeploy                                   # delete the Application and what it owns
+#
+# Chart version and image tag are the same value: publish-chart.sh sets the
+# chart's appVersion to the image tag it was built with.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: downscaler
+  namespace: argocd
+  finalizers:
+    # deleting the Application deletes what it deployed
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    app.kubernetes.io/part-of: environment-parking
+spec:
+  project: default
+  # The published chart, and nothing from Git: `make deploy-published`
+  # inlines values-local.yaml as helm.valuesObject when it applies this file.
+  source:
+    repoURL: "" # CHART_REGISTRY: the make targets set this
+    chart: go-kube-downscaler
+    targetRevision: 1.3.4-20260925021236 # VERSION: make deploy-published replaces this
+    helm:
+      releaseName: downscaler
+      valuesObject: {} # replaced with values-local.yaml at apply time
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: downscaler
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 2m
