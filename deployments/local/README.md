@@ -6,17 +6,17 @@ Kubernetes.
 Run the commands from the repository root, in order.
 
 - [0.
-Prerequisites](#0-prerequisites)
+  Prerequisites](#0-prerequisites)
 - [1.
-CI checks, locally](#1-ci-checks-locally)
+  CI checks, locally](#1-ci-checks-locally)
 - [2.
-Operators and the test environment](#2-operators-and-the-test-environment)
+  Operators and the test environment](#2-operators-and-the-test-environment)
 - [3.
-Run the downscaler](#3-run-the-downscaler)
+  Run the downscaler](#3-run-the-downscaler)
 - [4.
-Tests](#4-tests)
+  Tests](#4-tests)
 - [5.
-Tear down](#5-tear-down)
+  Tear down](#5-tear-down)
 
 The [`Makefile`](Makefile) here is a different path: it deploys through Argo CD
 and expects Argo CD, Gitea and a registry to be installed already.
@@ -359,10 +359,10 @@ Then, still downscaled:
   is still at 1, with no original-replicas annotation.
 - Operator-owned StatefulSets: `rabbit-server` and `redis-replication` have no
   original-replicas annotation.
-Their operators scale them, so the
+  Their operators scale them, so the
   `statefulsets` scaler must leave them alone.
 - Repeated scans change nothing: wait three scan intervals and compare.
-A
+  A
   sentinel whose original changed from 3 to 1 would mean it was downscaled twice.
 
   ```bash
