@@ -8,9 +8,7 @@ metadata:
     {{- with .Values.webhookController.podMonitor.additionalLabels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
-  {{- with .Values.webhookController.podMonitor.namespace }}
-  namespace: {{ . }}
-  {{- end }}
+  namespace: {{ .Values.webhookController.podMonitor.namespace | default .Release.Namespace }}
 spec:
   podMetricsEndpoints:
     - port: metrics

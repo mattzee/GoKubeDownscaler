@@ -1,0 +1,18 @@
+# Used by `ct install` / `ct lint` and the lint job: every optional feature on.
+replicaCount: 2
+commonLabels:
+  team: platform
+serviceMonitor:
+  enabled: true
+podMonitor:
+  enabled: true
+prometheusRule:
+  enabled: true
+tracing:
+  enabled: true
+  endpoint: http://alloy.monitoring.svc:4317
+  collector:
+    namespaceSelector:
+      kubernetes.io/metadata.name: monitoring
+healthProbes:
+  livenessStaleAfter: 10m

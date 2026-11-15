@@ -1,0 +1,89 @@
+suite: controller
+templates:
+  - deployment.yaml
+  - configmap.yaml
+release:
+  name: gkd
+  namespace: downscaler
+tests:
+  - it: serves probes and metrics on one unprivileged named port
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content: { name: http, containerPort: 8080, protocol: TCP }
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --port=8080
+      - equal: { path: 'spec.template.spec.containers[0].livenessProbe.httpGet', value: { path: /healthz, port: http } }
+      - equal: { path: 'spec.template.spec.containers[0].readinessProbe.httpGet', value: { path: /readyz, port: http } }
+      - equal: { path: 'spec.template.spec.containers[0].startupProbe.httpGet', value: { path: /readyz, port: http } }
+
+  - it: meets the restricted Pod Security Standard
+    template: deployment.yaml
+    asserts:
+      - equal: { path: spec.template.spec.securityContext.seccompProfile.type, value: RuntimeDefault }
+      - equal: { path: spec.template.spec.securityContext.runAsNonRoot, value: true }
+      - equal: { path: 'spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation', value: false }
+      - equal: { path: 'spec.template.spec.containers[0].securityContext.capabilities.drop', value: [ALL] }
+
+  - it: logs JSON and exposes metrics by default
+    template: deployment.yaml
+    asserts:
+      - contains: { path: 'spec.template.spec.containers[0].args', content: --json-logs }
+      - contains: { path: 'spec.template.spec.containers[0].args', content: --metrics }
+      - notContains: { path: 'spec.template.spec.containers[0].args', content: --tracing }
+
+  - it: has no CPU limit and a memory limit
+    template: deployment.yaml
+    asserts:
+      - notExists: { path: 'spec.template.spec.containers[0].resources.limits.cpu' }
+      - exists: { path: 'spec.template.spec.containers[0].resources.limits.memory' }
+
+  - it: never runs two scan loops during a single-replica rollout
+    template: deployment.yaml
+    asserts:
+      - equal: { path: spec.strategy.rollingUpdate.maxSurge, value: 0 }
+      - notContains: { path: 'spec.template.spec.containers[0].args', content: --leader-election }
+
+  - it: turns on leader election and spreads replicas when scaled out
+    template: deployment.yaml
+    set:
+      replicaCount: 2
+    asserts:
+      - contains: { path: 'spec.template.spec.containers[0].args', content: --leader-election }
+      - exists: { path: spec.template.spec.affinity.podAntiAffinity }
+
+  - it: configures OTLP export through OTEL_* variables
+    template: deployment.yaml
+    set:
+      tracing.enabled: true
+      tracing.endpoint: http://alloy.monitoring.svc:4317
+      tracing.resourceAttributes: { deployment.environment: dev }
+    asserts:
+      - contains: { path: 'spec.template.spec.containers[0].args', content: --tracing }
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://alloy.monitoring.svc:4317" }
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: { name: OTEL_SERVICE_NAME, value: gkd-go-kube-downscaler }
+      - matchRegex:
+          path: spec.template.spec.containers[0].env[?(@.name == "OTEL_RESOURCE_ATTRIBUTES")].value
+          pattern: ^k8s\.pod\.name=\$\(POD_NAME\),k8s\.namespace\.name=\$\(POD_NAMESPACE\),service\.version=.+,deployment\.environment=dev$
+
+  - it: pins the image by digest when given
+    template: deployment.yaml
+    set:
+      image.digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/caas-team/gokubedownscaler@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+
+  - it: names the ConfigMap after the release and mounts that name
+    asserts:
+      - template: configmap.yaml
+        equal: { path: metadata.name, value: gkd-go-kube-downscaler }
+      - template: deployment.yaml
+        equal: { path: 'spec.template.spec.containers[0].envFrom[0].configMapRef.name', value: gkd-go-kube-downscaler }
