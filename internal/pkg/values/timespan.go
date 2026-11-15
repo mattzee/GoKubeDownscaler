@@ -37,7 +37,32 @@ type TimeSpan interface {
 	isTimeInSpan(time time.Time, scopes Scopes) (bool, error)
 }
 
+// expirable is implemented by timespans that, once a point in time has passed, can never match again.
+// Relative and boolean timespans recur or never end and therefore do not implement it.
+type expirable interface {
+	// isExpired reports whether the timespan cannot match at or after now.
+	isExpired(now time.Time) bool
+}
+
 type timeSpans []TimeSpan
+
+// allExpired reports whether every timespan has passed and can never match again.
+// An unset (empty) timeSpans holds nothing, so it counts as expired.
+// A timespan that cannot expire (relative, boolean, directional "from") keeps the whole set alive.
+func (t *timeSpans) allExpired(now time.Time) bool {
+	if t == nil {
+		return true
+	}
+
+	for _, timespan := range *t {
+		exp, ok := timespan.(expirable)
+		if !ok || !exp.isExpired(now) {
+			return false
+		}
+	}
+
+	return true
+}
 
 // inTimeSpans checks if current time is in one of the timespans or not.
 func (t *timeSpans) inTimeSpans(scopes Scopes) (bool, error) {
@@ -287,6 +312,11 @@ func (t absoluteTimeSpan) isTimeInSpan(targetTime time.Time, _ Scopes) (bool, er
 	return (t.from.Before(targetTime) || t.from.Equal(targetTime)) && t.to.After(targetTime), nil
 }
 
+// isExpired reports whether the span's end has been reached; an absolute span never matches again after "to".
+func (t absoluteTimeSpan) isExpired(now time.Time) bool {
+	return !t.to.After(now)
+}
+
 // String implementation for absoluteTimeSpan.
 func (t absoluteTimeSpan) String() string {
 	return fmt.Sprintf(
@@ -366,6 +396,11 @@ func (s directionalTimeSpan) isTimeInSpan(targetTime time.Time, _ Scopes) (bool,
 	}
 
 	return false, newIsTimeInSpanError("unknown timespan mode")
+}
+
+// isExpired reports whether an "until" span has passed. A "from" span never expires.
+func (s directionalTimeSpan) isExpired(now time.Time) bool {
+	return s.mode != nil && *s.mode == modeUntil && !now.Before(s.time)
 }
 
 // String implementation for directionalTimeSpan.

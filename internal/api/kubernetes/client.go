@@ -6,6 +6,7 @@ import (
 	stdErrors "errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -24,6 +25,7 @@ import (
 	monitoring "github.com/prometheus-operator/prometheus-operator/pkg/client/versioned"
 	zalando "github.com/zalando-incubator/stackset-controller/pkg/clientset"
 	acidv1 "github.com/zalando/postgres-operator/pkg/apis/acid.zalan.do/v1"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -109,6 +111,9 @@ func NewClient(kubeconfig string, dryRun bool, qps float64, burst, timeout int) 
 	config.QPS = float32(qps)                             // available queries per second, when unused will fill the burst buffer
 	config.Burst = burst                                  // the max size of the buffer of queries
 	config.Timeout = time.Duration(timeout) * time.Second // set the timeout for requests to the Kubernetes API
+
+	// each API request becomes a child span of the caller's span when tracing is enabled, and a no-op when it is not
+	config.Wrap(func(roundTripper http.RoundTripper) http.RoundTripper { return otelhttp.NewTransport(roundTripper) })
 
 	clientsets.Kubernetes, err = kubernetes.NewForConfig(config)
 	if err != nil {
@@ -549,7 +554,7 @@ func (c client) GetNamespaceScope(namespace string, ctx context.Context) (*value
 
 // GetScaledObjects gets all scaledobjects in the specified namespace.
 func (c client) GetScaledObjects(namespace string, ctx context.Context) ([]scalable.Workload, error) {
-	scaledObjects, err := scalable.GetWorkloads("scaledobject", namespace, c.clientsets, ctx)
+	scaledObjects, err := scalable.GetWorkloads(scalable.ScaledObjectsResource, namespace, c.clientsets, ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get scaledobjects: %w", err)
 	}

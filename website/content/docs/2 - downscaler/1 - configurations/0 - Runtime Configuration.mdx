@@ -86,6 +86,16 @@ Here is a list of all the available runtime configurations for the Downscaler.
 - works for components: KubeDownscaler (you can still specify this argument inside the Webhook but types configured inside the
   MutatingWebhookConfiguration take precedence)
 
+### Workload Definitions File
+
+- Type: String (file path)
+- Description: Sets the file operator [workload definitions](ref:docs-workload-types#workload-definitions) are loaded from at startup.
+  A missing file means built-in resources only.
+  An invalid file, or an included resource that is neither built in nor defined, stops the process.
+- Default: `/etc/downscaler/workload-definitions.yaml`
+- Where to set: [CLI Scope](ref:docs-cli-scope#runtime-configuration)
+- works for components: KubeDownscaler, Webhook
+
 ### Exclude Namespaces
 
 - Type: [Regex List](ref:docs-regex-list) (list of regex patterns matching namespace names)

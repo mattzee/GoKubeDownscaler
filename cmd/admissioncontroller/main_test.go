@@ -104,6 +104,10 @@ func TestToSetFunction(t *testing.T) {
 	require.Contains(t, resultSet, "a")
 	require.Contains(t, resultSet, "b")
 	require.Contains(t, resultSet, "c")
+
+	mixed := toSet([]string{"ScaledObjects", "Deployments"})
+	require.Contains(t, mixed, "scaledobjects", "include-resources are case-insensitive")
+	require.Contains(t, mixed, "deployments")
 }
 
 func buildBadContentTypeRequest(t *testing.T) *http.Request {

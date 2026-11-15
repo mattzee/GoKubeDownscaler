@@ -237,6 +237,15 @@ func TestScope_getCurrentScaling(t *testing.T) {
 func TestScope_getForceScaling(t *testing.T) {
 	t.Parallel()
 
+	expiredSpan := absoluteTimeSpan{
+		from: time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC),
+		to:   time.Date(2000, time.January, 1, 1, 0, 0, 0, time.UTC),
+	}
+	futureSpan := absoluteTimeSpan{
+		from: time.Date(2200, time.January, 1, 0, 0, 0, 0, time.UTC),
+		to:   time.Date(2200, time.January, 1, 1, 0, 0, 0, time.UTC),
+	}
+
 	tests := []struct {
 		name        string
 		scopes      Scopes
@@ -343,6 +352,92 @@ func TestScope_getForceScaling(t *testing.T) {
 				ForceDowntime: timeSpans{booleanTimeSpan(true)},
 			},
 			wantScaling: ScalingDown,
+		},
+		{
+			name: "expired absolute forceUptime is unset",
+			scopes: Scopes{
+				GetDefaultScope(),
+				GetDefaultScope(),
+				GetDefaultScope(),
+				GetDefaultScope(),
+				GetDefaultScope(),
+			},
+			scope: Scope{
+				ForceUptime: timeSpans{expiredSpan},
+			},
+			wantScaling: ScalingNone,
+		},
+		{
+			name: "expired absolute forceDowntime is unset",
+			scopes: Scopes{
+				GetDefaultScope(),
+				GetDefaultScope(),
+				GetDefaultScope(),
+				GetDefaultScope(),
+				GetDefaultScope(),
+			},
+			scope: Scope{
+				ForceDowntime: timeSpans{expiredSpan},
+			},
+			wantScaling: ScalingNone,
+		},
+		{
+			name: "expired absolute forceUptime and forceDowntime are unset",
+			scopes: Scopes{
+				GetDefaultScope(),
+				GetDefaultScope(),
+				GetDefaultScope(),
+				GetDefaultScope(),
+				GetDefaultScope(),
+			},
+			scope: Scope{
+				ForceUptime:   timeSpans{expiredSpan},
+				ForceDowntime: timeSpans{expiredSpan},
+			},
+			wantScaling: ScalingNone,
+		},
+		{
+			name: "future absolute forceUptime is set but inactive",
+			scopes: Scopes{
+				GetDefaultScope(),
+				GetDefaultScope(),
+				GetDefaultScope(),
+				GetDefaultScope(),
+				GetDefaultScope(),
+			},
+			scope: Scope{
+				ForceUptime: timeSpans{futureSpan},
+			},
+			wantScaling: ScalingIgnore,
+		},
+		{
+			name: "expired absolute forceUptime with future forceDowntime stays set",
+			scopes: Scopes{
+				GetDefaultScope(),
+				GetDefaultScope(),
+				GetDefaultScope(),
+				GetDefaultScope(),
+				GetDefaultScope(),
+			},
+			scope: Scope{
+				ForceUptime:   timeSpans{expiredSpan},
+				ForceDowntime: timeSpans{futureSpan},
+			},
+			wantScaling: ScalingIgnore,
+		},
+		{
+			name: "expired absolute alongside boolean false stays set",
+			scopes: Scopes{
+				GetDefaultScope(),
+				GetDefaultScope(),
+				GetDefaultScope(),
+				GetDefaultScope(),
+				GetDefaultScope(),
+			},
+			scope: Scope{
+				ForceUptime: timeSpans{expiredSpan, booleanTimeSpan(false)},
+			},
+			wantScaling: ScalingIgnore,
 		},
 		{
 			name: "forceUptime true and forceDowntime false",

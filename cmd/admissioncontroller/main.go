@@ -7,12 +7,14 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 	_ "time/tzdata"
 
 	"github.com/caas-team/gokubedownscaler/internal/api/kubernetes"
 	"github.com/caas-team/gokubedownscaler/internal/api/kubernetes/admission"
 	"github.com/caas-team/gokubedownscaler/internal/pkg/metrics"
+	"github.com/caas-team/gokubedownscaler/internal/pkg/scalable"
 	"github.com/caas-team/gokubedownscaler/internal/pkg/values"
 	apimachineryruntime "k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -49,6 +51,11 @@ const (
 
 func main() {
 	config, scopeDefault, scopeCli, scopeEnv := initComponent()
+
+	if err := scalable.InitDefinitions(config.WorkloadDefinitionsFile, config.IncludeResources); err != nil {
+		slog.Error("invalid workload definitions", "error", err)
+		os.Exit(1)
+	}
 
 	scheme := apimachineryruntime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
@@ -269,10 +276,12 @@ func cleanDeletedNamespaceMetrics(ctx context.Context, config *serverConfig, cli
 	}
 }
 
+// toSet builds the set of included resources. Names are lowercased, matching how the
+// downscaler resolves --include-resources, so a check like "scaledobjects" is case-insensitive.
 func toSet(items []string) map[string]struct{} {
 	m := make(map[string]struct{}, len(items))
 	for _, item := range items {
-		m[item] = struct{}{}
+		m[strings.ToLower(item)] = struct{}{}
 	}
 
 	return m
